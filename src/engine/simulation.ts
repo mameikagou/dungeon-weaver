@@ -1,6 +1,16 @@
 import { boons, boonChoices, calcPlayerStats, type Boon } from '../content/boons';
 import { canStand, rooms, dungeonRooms, ROOM_HEIGHT, ROOM_WIDTH, type Room } from '../content/rooms';
 import { enemyTypes, enemySymbols, enemyStates } from '../content/enemies';
+import {
+  swordMoves,
+  swingAngle,
+  STAMINA_MAX,
+  STAMINA_DELAY,
+  ROLL_COST,
+  ROLL_TICKS,
+  type SwordSwing,
+  type Weapon,
+} from '../content/weapons';
 import { EntityPool } from './pool';
 import { SeededRNG } from './random';
 import { SpatialGrid } from './spatial-grid';
@@ -21,7 +31,18 @@ export interface GameInput {
   charge: boolean;
 }
 export type GameEvent =
-  'hud' | 'fire' | 'heavy' | 'hit' | 'hurt' | 'block' | 'dash' | 'clear' | 'warning' | 'stance-break' | 'riposte';
+  | 'hud'
+  | 'fire'
+  | 'heavy'
+  | 'hit'
+  | 'hurt'
+  | 'block'
+  | 'dash'
+  | 'clear'
+  | 'warning'
+  | 'stance-break'
+  | 'riposte'
+  | 'swing';
 export type Phase = 'playing' | 'reward' | 'dead' | 'won';
 export interface Zone {
   x: number;
@@ -83,6 +104,13 @@ export class Simulation {
   riposteZ = 0;
   ripostes = 0;
   stanceBreaks = 0;
+  weapon: Weapon = 'greatsword';
+  stamina = STAMINA_MAX;
+  staminaDelay = 0;
+  swing: SwordSwing | null = null;
+  combo = 0;
+  comboUntil = 0;
+  private readonly swingHits = new Set<number>();
   private riposteSlot = -1;
   private attackHeld = false;
   private readyTarget = 0;
@@ -148,6 +176,7 @@ export class Simulation {
     this.updateEnemies();
     if (this.phase !== 'playing') return;
     this.grid.rebuild(this.enemies);
+    this.hitWithSword();
     this.updateBullets();
     this.updateZones();
     const target = this.getRiposteTarget();
@@ -169,6 +198,7 @@ export class Simulation {
     if (this.player.flash[0] > 0) this.player.flash[0]--;
     if (this.recoilTicks > 0) this.recoilTicks--;
     if (this.empoweredTicks > 0) this.empoweredTicks--;
+    this.recoverStamina();
     this.recoverPoise(this.player, 0);
     if (this.riposteTicks) {
       this.updateRiposte();
@@ -198,12 +228,15 @@ export class Simulation {
       this.onEvent('hud');
       return;
     }
-    if (this.input.dash && !this.dashHeld && !this.dashCooldown) this.startDash();
+    const move = this.swing && swordMoves[this.swing.move];
+    const canRoll = !this.swing || (move && this.swing.age >= move.startup + move.active + move.recovery - 8);
+    if (this.input.dash && !this.dashHeld && !this.dashCooldown && canRoll) this.startDash();
     this.dashHeld = this.input.dash;
     const dashing = this.dashTicks > 0;
     if (!this.input.charge && !this.chargeHeld) this.chargeCancelled = false;
-    const charging = this.input.charge && !this.chargeCancelled && !dashing;
-    const speed = dashing ? 15 : charging ? 2.5 : 4.8;
+    const charging = this.input.charge && !this.chargeCancelled && !dashing && !this.swing;
+    const recovering = this.swing && move && this.swing.age >= move.startup + move.active;
+    const speed = dashing ? 10 : recovering ? 2.4 : this.swing ? 1.2 : charging ? 2.5 : 4.8;
     this.player.vx[0] = (dashing ? this.dashX : this.input.moveX) * speed;
     this.player.vz[0] = (dashing ? this.dashZ : this.input.moveZ) * speed;
     this.move(this.player, 0);
@@ -221,18 +254,31 @@ export class Simulation {
     }
     if (this.dashTicks > 0) this.dashTicks--;
     if (this.fireCooldown > 0) this.fireCooldown--;
+    if (this.swing) {
+      const action = swordMoves[this.swing.move];
+      this.swing.age++;
+      if (this.swing.age > action.startup + action.active + action.recovery) this.swing = null;
+    }
     if (charging) this.chargeTicks = Math.min(60, this.chargeTicks + 1);
     if (!this.input.charge && this.chargeHeld) {
-      if (this.chargeTicks >= 12 && !this.chargeCancelled && !dashing) this.fire(this.chargeTicks / 60);
+      if (this.chargeTicks >= 12 && !this.chargeCancelled && !dashing && !this.swing)
+        this.attack(this.chargeTicks / 60);
       this.chargeTicks = 0;
       this.chargeCancelled = false;
     }
     this.chargeHeld = this.input.charge;
-    if (this.input.attack && !this.input.charge && !dashing && !this.fireCooldown) this.fire(0);
+    if (this.input.attack && !this.input.charge && !dashing && !this.fireCooldown && !this.swing) this.attack(0);
   }
 
   getRiposteTarget(): number {
-    if (this.phase !== 'playing' || this.riposteTicks || this.staggerTicks || this.dashTicks || this.chargeTicks)
+    if (
+      this.phase !== 'playing' ||
+      this.riposteTicks ||
+      this.staggerTicks ||
+      this.dashTicks ||
+      this.chargeTicks ||
+      this.swing
+    )
       return -1;
     let nearest = -1;
     let distance = RIPOSTE_RANGE;
@@ -308,10 +354,13 @@ export class Simulation {
   }
 
   private startDash(): void {
+    if (!this.spendStamina(ROLL_COST)) return;
+    this.swing = null;
+    this.combo = 0;
     const context = { trail: false, empower: false };
     for (const effect of this.effects) effect.onDash?.(context);
-    this.dashTicks = 10;
-    this.invulnerable = 11;
+    this.dashTicks = ROLL_TICKS;
+    this.invulnerable = ROLL_TICKS;
     this.dashCooldown = 48;
     this.dashTrail = context.trail;
     if (context.empower) this.empoweredTicks = 120;
@@ -321,6 +370,101 @@ export class Simulation {
     this.dashX = moving ? this.input.moveX : this.input.aimX;
     this.dashZ = moving ? this.input.moveZ : this.input.aimZ;
     this.onEvent('dash');
+  }
+
+  equipWeapon(weapon: Weapon): boolean {
+    if (weapon !== 'greatsword' && weapon !== 'focus') throw new Error('未知武器');
+    if (
+      this.phase !== 'playing' ||
+      this.swing ||
+      this.riposteTicks ||
+      this.dashTicks ||
+      this.staggerTicks ||
+      this.chargeTicks ||
+      this.fireCooldown
+    )
+      return false;
+    this.weapon = weapon;
+    this.combo = 0;
+    this.onEvent('hud');
+    return true;
+  }
+
+  private spendStamina(amount: number): boolean {
+    if (this.stamina < amount) return false;
+    this.stamina -= amount;
+    this.staminaDelay = STAMINA_DELAY;
+    this.onEvent('hud');
+    return true;
+  }
+
+  private recoverStamina(): void {
+    if (this.swing || this.chargeTicks || this.dashTicks || this.riposteTicks || this.staggerTicks) {
+      this.staminaDelay = STAMINA_DELAY;
+      return;
+    }
+    if (this.staminaDelay > 0) {
+      this.staminaDelay--;
+      return;
+    }
+    if (this.stamina < STAMINA_MAX && this.combatTick % 6 === 0) {
+      this.stamina = Math.min(STAMINA_MAX, this.stamina + 3);
+      this.onEvent('hud');
+    }
+  }
+
+  private attack(charge: number): void {
+    if (this.weapon === 'focus') {
+      if (this.spendStamina(charge ? 18 : 4)) this.fire(charge);
+      return;
+    }
+    if (this.combatTick > this.comboUntil) this.combo = 0;
+    const index = charge ? 3 : this.combo;
+    const move = swordMoves[index];
+    if (!this.spendStamina(move.cost)) return;
+    this.swing = {
+      move: index,
+      age: 1,
+      angle: Math.atan2(this.input.aimZ, this.input.aimX),
+      damage: (move.damage + (charge ? 60 * charge : 0)) * (this.empoweredTicks ? 2 : 1),
+      poise: move.poise + 22 * charge,
+    };
+    this.swingHits.clear();
+    this.empoweredTicks = 0;
+    this.combo = charge ? 0 : (this.combo + 1) % 3;
+    this.comboUntil = this.combatTick + move.startup + move.active + move.recovery + 36;
+    this.onEvent(charge ? 'heavy' : 'swing');
+  }
+
+  private hitWithSword(): void {
+    const swing = this.swing;
+    if (!swing) return;
+    const move = swordMoves[swing.move];
+    if (swing.age < move.startup || swing.age >= move.startup + move.active) return;
+    const first = swingAngle(swing, swing.age - 1) - swing.angle;
+    const last = swingAngle(swing) - swing.angle;
+    for (let index = this.enemies.count - 1; index >= 0; index--) {
+      const slot = this.enemies.active[index];
+      if (this.swingHits.has(this.enemies.id[slot]) || this.enemies.state[slot] === 5) continue;
+      const dx = this.enemies.x[slot] - this.player.x[0];
+      const dz = this.enemies.z[slot] - this.player.z[0];
+      const distance = Math.hypot(dx, dz);
+      if (
+        distance > move.reach + this.enemies.radius[slot] ||
+        !this.lineOfSight(this.enemies.x[slot], this.enemies.z[slot])
+      )
+        continue;
+      const angle = Math.atan2(Math.sin(Math.atan2(dz, dx) - swing.angle), Math.cos(Math.atan2(dz, dx) - swing.angle));
+      const margin = Math.asin(Math.min(1, this.enemies.radius[slot] / Math.max(0.001, distance)));
+      if (angle < Math.min(first, last) - margin || angle > Math.max(first, last) + margin) continue;
+      this.swingHits.add(this.enemies.id[slot]);
+      const facing = (-dx * this.enemies.facingX[slot] - dz * this.enemies.facingZ[slot]) / Math.max(0.001, distance);
+      if (this.enemies.kind[slot] === 2 && this.enemies.state[slot] < 3 && facing > 0.5) {
+        this.damagePoise(slot, swing.poise / 2);
+        this.addVisual('block', this.enemies.x[slot], this.enemies.z[slot]);
+        this.onEvent('block');
+      } else this.hitEnemy(slot, swing.damage, swing.move >= 2, swing.poise);
+    }
   }
 
   private fire(charge: number): void {
@@ -524,6 +668,8 @@ export class Simulation {
       this.staggerTicks = 30;
       this.dashTicks = 0;
       this.cancelCharge();
+      this.swing = null;
+      this.combo = 0;
     }
     this.damageTaken += damage;
     this.player.flash[0] = 12;
@@ -533,6 +679,7 @@ export class Simulation {
     if (!this.player.hp[0]) {
       this.phase = 'dead';
       this.chargeTicks = 0;
+      this.swing = null;
     }
     this.onEvent('hurt');
   }
@@ -743,6 +890,11 @@ export class Simulation {
     this.riposteSlot = -1;
     this.player.poise[0] = this.player.maxPoise[0];
     this.player.poiseDelay[0] = 0;
+    this.swing = null;
+    this.swingHits.clear();
+    this.combo = this.comboUntil = 0;
+    this.stamina = STAMINA_MAX;
+    this.staminaDelay = 0;
     this.player.flash[0] = 0;
     this.invulnerable = 30;
     this.player.vx[0] = this.player.vz[0] = 0;
@@ -789,6 +941,7 @@ export class Simulation {
     this.pierced.clear();
     this.zones.length = 0;
     this.chargeTicks = this.empoweredTicks = 0;
+    this.swing = null;
     this.onEvent('clear');
   }
 
@@ -843,6 +996,11 @@ export class Simulation {
       empoweredTicks: this.empoweredTicks,
       recoilTicks: this.recoilTicks,
       staggerTicks: this.staggerTicks,
+      weapon: this.weapon,
+      stamina: this.stamina,
+      staminaRecoveryTicks: this.staminaDelay,
+      swing: this.swing ? { ...this.swing, bladeAngle: swingAngle(this.swing) } : null,
+      combo: this.combo,
       riposte: { ticksRemaining: this.riposteTicks, targetId: this.riposteTarget, readyTargetId: this.readyTarget },
       ripostes: this.ripostes,
       stanceBreaks: this.stanceBreaks,

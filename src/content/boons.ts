@@ -64,7 +64,7 @@ export const boons: readonly Boon[] = [
     name: '破晓',
     icon: '✦',
     route: '突进',
-    description: '冲刺后 2 秒内的下一次射击伤害翻倍，可强化蓄力射击。',
+    description: '翻滚后 2 秒内的下一次大剑或灵弹攻击伤害翻倍，包括蓄力攻击。',
     onDash: (context) => {
       context.empower = true;
     },

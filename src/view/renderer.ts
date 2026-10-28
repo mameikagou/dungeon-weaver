@@ -4,6 +4,71 @@ import type { EntityPool } from '../engine/pool';
 import { RIPOSTE_TICKS, type Simulation } from '../engine/simulation';
 import { ROOM_HEIGHT, ROOM_WIDTH } from '../content/rooms';
 import { enemyTypes } from '../content/enemies';
+import { swordMoves, swingAngle, ROLL_TICKS } from '../content/weapons';
+
+function drawKnight(context: CanvasRenderingContext2D, left: number, frame: number): void {
+  const bob = [0, -1, 0, 1][frame];
+  const hem = [-2, 1, 2, -1][frame];
+  context.save();
+  context.translate(left, bob);
+  context.fillStyle = '#141b28';
+  context.beginPath();
+  context.moveTo(22, 24);
+  context.lineTo(42, 24);
+  context.lineTo(53 + hem, 56);
+  context.lineTo(36, 51);
+  context.lineTo(29, 59);
+  context.lineTo(10 + hem, 55);
+  context.closePath();
+  context.fill();
+  context.strokeStyle = '#a88f5e';
+  context.lineWidth = 2;
+  context.stroke();
+  context.fillStyle = '#30414e';
+  context.fillRect(24, 28, 17, 21);
+  context.fillStyle = '#48545c';
+  context.fillRect(23, 51 + (frame % 2) * 2, 8, 8);
+  context.fillRect(35, 53 - (frame % 2) * 2, 8, 8);
+  context.fillStyle = '#899da2';
+  context.beginPath();
+  context.moveTo(20, 15);
+  context.lineTo(31, 3);
+  context.lineTo(44, 15);
+  context.lineTo(42, 30);
+  context.lineTo(23, 30);
+  context.closePath();
+  context.fill();
+  context.fillStyle = '#c5d3cc';
+  context.fillRect(30, 8, 3, 22);
+  context.fillStyle = '#101a23';
+  context.fillRect(22, 18, 20, 7);
+  context.fillStyle = '#d1fff0';
+  context.fillRect(24, 20, 5, 2);
+  context.fillRect(35, 20, 5, 2);
+  context.fillStyle = '#a88f5e';
+  context.fillRect(21, 31, 23, 3);
+  context.restore();
+}
+
+function makeSword(): THREE.Group {
+  const sword = new THREE.Group();
+  const blade = new THREE.Mesh(
+    new THREE.BoxGeometry(1.5, 0.08, 0.22),
+    new THREE.MeshBasicMaterial({ color: '#c5d3cc' }),
+  );
+  blade.position.x = 1;
+  const guard = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.14, 0.6),
+    new THREE.MeshBasicMaterial({ color: '#ad945c' }),
+  );
+  guard.position.x = 0.25;
+  const grip = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 0.12, 0.12),
+    new THREE.MeshBasicMaterial({ color: '#493d32' }),
+  );
+  sword.add(blade, guard, grip);
+  return sword;
+}
 
 function spriteAtlas(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
@@ -15,6 +80,10 @@ function spriteAtlas(): THREE.CanvasTexture {
     context.translate(0, kind * 64);
     for (let frame = 0; frame < 4; frame++) {
       const left = frame * 64;
+      if (kind === 0) {
+        drawKnight(context, left, frame);
+        continue;
+      }
       const bob = [0, -2, 0, 2][frame];
       context.fillStyle = '#ffffff';
       context.beginPath();
@@ -31,13 +100,7 @@ function spriteAtlas(): THREE.CanvasTexture {
       context.fillStyle = '#ffffff';
       context.fillRect(left + 23, 29 + bob, 3, 3);
       context.fillRect(left + 39, 29 + bob, 3, 3);
-      if (kind === 0) {
-        context.fillStyle = '#315c58';
-        context.fillRect(left + 13, 42 + bob, 37, 8);
-        context.fillStyle = '#ffffff';
-        context.fillRect(left + 49, 31 + bob, 7, 22);
-        context.fillRect(left + 46, 28 + bob, 13, 7);
-      } else if (kind === 1) {
+      if (kind === 1) {
         context.beginPath();
         context.moveTo(left + 15, 22);
         context.lineTo(left + 5, 5);
@@ -105,6 +168,7 @@ function makeActors(capacity: number, texture: THREE.Texture) {
         vec3 point = position;
         point.x += aLean * (point.y + 0.5) * 0.13;
         point.y *= 1.0 + sin(uTick * 0.3) * abs(aLean) * 0.04;
+        if (aKind < 0.5) point.x += sin(uTick * 0.12 + uv.y * 5.0) * max(0.0, 0.35 - uv.y) * 0.09;
         gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(point, 1.0);
       }`,
     fragmentShader: `
@@ -188,6 +252,17 @@ export class GameRenderer {
     new THREE.BoxGeometry(0.8, 0.17, 0.2),
     new THREE.MeshBasicMaterial({ color: '#e5f8b9' }),
   );
+  private readonly sword = makeSword();
+  private readonly swordTrail = new THREE.Mesh(
+    new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(16 * 6 * 3), 3)),
+    new THREE.MeshBasicMaterial({
+      color: '#ffe5a1',
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
   private readonly poiseBars = new THREE.InstancedMesh(
     new THREE.PlaneGeometry(1, 0.055),
     new THREE.MeshBasicMaterial({ color: '#efc879', depthTest: false }),
@@ -238,6 +313,8 @@ export class GameRenderer {
       this.fans,
       this.sparks,
       this.weapon,
+      this.sword,
+      this.swordTrail,
       this.chargeRing,
       this.dashBar,
       this.poiseBars,
@@ -247,6 +324,7 @@ export class GameRenderer {
       mesh.frustumCulled = false;
     this.bullets.frustumCulled = this.shadows.frustumCulled = false;
     this.poiseBars.frustumCulled = this.weakPoints.frustumCulled = false;
+    this.swordTrail.frustumCulled = false;
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.composer.addPass(
@@ -309,7 +387,7 @@ export class GameRenderer {
   draw(simulation: Simulation): void {
     if (this.roomId !== simulation.room.id) this.buildRoom(simulation);
     this.actors.mesh.material.uniforms.uTick.value = simulation.combatTick;
-    this.drawActor(simulation.player, 0, 0, simulation.empoweredTicks ? '#fff5ac' : '#b9fae3', simulation);
+    this.drawActor(simulation.player, 0, 0, simulation.empoweredTicks ? '#fff5ac' : '#ffffff', simulation);
     for (let index = 0; index < simulation.enemies.count; index++) {
       const slot = simulation.enemies.active[index];
       this.drawActor(simulation.enemies, slot, index + 1, enemyTypes[simulation.enemies.kind[slot]].color, simulation);
@@ -365,6 +443,11 @@ export class GameRenderer {
     this.dummy.quaternion.copy(this.camera.quaternion);
     const squash = kneeling ? 0.58 : player && (simulation.chargeTicks > 0 || simulation.staggerTicks > 0) ? 0.86 : 1;
     this.dummy.scale.set((1.05 * size) / squash, 1.25 * size * squash, 1);
+    if (player && simulation.dashTicks) {
+      this.dummy.rotateZ((1 - simulation.dashTicks / ROLL_TICKS) * Math.PI * 2);
+      this.dummy.scale.multiplyScalar(0.7);
+      this.dummy.position.y = 0.4;
+    }
     if (player && simulation.phase === 'dead') {
       this.dummy.rotateZ(Math.PI / 2);
       this.dummy.scale.multiplyScalar(0.75);
@@ -396,7 +479,8 @@ export class GameRenderer {
     this.weapon.rotation.y = -Math.atan2(dz, dx);
     this.weapon.material.color.set(executing ? '#ffe291' : '#e5f8b9');
     this.weapon.scale.x = executing ? 1.5 : 1;
-    this.weapon.visible = simulation.phase !== 'dead';
+    this.weapon.visible = simulation.weapon === 'focus' && !executing && simulation.phase !== 'dead';
+    this.drawSword(simulation);
     this.chargeRing.visible = simulation.chargeTicks > 0;
     this.chargeRing.position.set(player.x[0], 0.045, player.z[0]);
     this.chargeRing.rotation.x = -Math.PI / 2;
@@ -439,6 +523,44 @@ export class GameRenderer {
     this.warnings.instanceMatrix.needsUpdate = true;
     if (this.warnings.instanceColor) this.warnings.instanceColor.needsUpdate = true;
     this.swings.instanceMatrix.needsUpdate = this.fans.instanceMatrix.needsUpdate = true;
+  }
+
+  private drawSword(simulation: Simulation): void {
+    const { player, swing, input } = simulation;
+    const executing = simulation.riposteTicks > 0;
+    const move = swing ? swordMoves[swing.move] : swordMoves[0];
+    let angle = swing ? swingAngle(swing) : Math.atan2(input.aimZ, input.aimX) - 0.5;
+    if (executing) angle = Math.atan2(simulation.riposteZ - player.z[0], simulation.riposteX - player.x[0]);
+    this.sword.visible =
+      (simulation.weapon === 'greatsword' || executing) && !simulation.dashTicks && simulation.phase !== 'dead';
+    this.sword.position.set(player.x[0], 0.55, player.z[0]);
+    if (executing) {
+      const thrust = Math.sin((Math.PI * simulation.riposteTicks) / RIPOSTE_TICKS) * 0.35;
+      this.sword.position.x += Math.cos(angle) * thrust;
+      this.sword.position.z += Math.sin(angle) * thrust;
+    }
+    this.sword.rotation.y = -angle;
+    this.sword.scale.set(move.reach / 1.75, 1, 1);
+    this.swordTrail.visible = !!swing && swing.age >= move.startup && swing.age < move.startup + move.active;
+    if (!swing || !this.swordTrail.visible) return;
+    const start = swingAngle(swing, swing.age - 1);
+    const end = swingAngle(swing);
+    const positions = this.swordTrail.geometry.getAttribute('position');
+    for (let segment = 0; segment < 16; segment++) {
+      for (let vertex = 0; vertex < 6; vertex++) {
+        const outer = vertex === 1 || vertex === 2 || vertex === 4;
+        const next = vertex === 2 || vertex === 4 || vertex === 5;
+        const theta = start + ((end - start) * (segment + Number(next))) / 16;
+        const radius = move.reach * (outer ? 1 : 0.45);
+        positions.setXYZ(
+          segment * 6 + vertex,
+          player.x[0] + Math.cos(theta) * radius,
+          0.55,
+          player.z[0] + Math.sin(theta) * radius,
+        );
+      }
+    }
+    positions.needsUpdate = true;
   }
 
   private drawPoise(simulation: Simulation): void {
@@ -548,10 +670,16 @@ export class GameRenderer {
       mesh.material.dispose();
       mesh.dispose();
     }
-    for (const mesh of [this.weapon, this.chargeRing, this.dashBar]) {
+    for (const mesh of [this.weapon, this.swordTrail, this.chargeRing, this.dashBar]) {
       mesh.geometry.dispose();
       mesh.material.dispose();
     }
+    this.sword.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        object.geometry.dispose();
+        object.material.dispose();
+      }
+    });
     this.texture.dispose();
     this.composer.dispose();
     this.renderer.dispose();

@@ -85,7 +85,7 @@ export const rooms = [
     ],
   },
   {
-    id: 'crown-gate', name: '苔冠之门', waves: 3, hint: '用蓄力贯穿聚集的敌人，给自己留下闪避空间。',
+    id: 'crown-gate', name: '苔冠之门', waves: 3, hint: '蓄力重斩或贯穿灵弹处理聚集敌人，保留翻滚所需的精力。',
     rows: [
       '####################',
       '#..................#',
@@ -125,7 +125,7 @@ export const rooms = [
     ],
   },
   {
-    id: 'training-room', name: '静谧庭院', waves: 1, hint: '练习普通射击、E 键蓄力和空格闪避。',
+    id: 'training-room', name: '静谧庭院', waves: 1, hint: '左键三段连击 · E 蓄力重斩 · 空格翻滚 · Q 大剑 / 灵弹。',
     rows: [
       '####################',
       '#..................#',

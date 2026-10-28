@@ -8,6 +8,8 @@ import {
   createUiBridge,
   hpAtom,
   poiseAtom,
+  staminaAtom,
+  weaponAtom,
   combatPromptAtom,
   goldAtom,
   enemiesAtom,
@@ -27,6 +29,7 @@ import {
 function Vitality() {
   const hp = useAtomValue(hpAtom);
   const poise = useAtomValue(poiseAtom);
+  const stamina = useAtomValue(staminaAtom);
   return (
     <div className="vitality">
       <div className="flex justify-between text-xs tracking-widest">
@@ -37,6 +40,20 @@ function Vitality() {
         <div style={{ width: `${hp}%` }} />
       </div>
       <div className="mt-2 text-xs text-amber-200">韧性 {poise} / 40</div>
+      <div className="mt-3 flex justify-between text-xs">
+        <span>精力 · STAMINA</span>
+        <span>{stamina} / 100</span>
+      </div>
+      <div
+        className="stamina-track"
+        role="meter"
+        aria-label="精力"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={stamina}
+      >
+        <div style={{ width: `${stamina}%` }} />
+      </div>
     </div>
   );
 }
@@ -94,6 +111,7 @@ function Inventory() {
   const gold = useAtomValue(goldAtom);
   const ids = useAtomValue(boonsAtom);
   const stats = useAtomValue(computedStatsAtom);
+  const weapon = useAtomValue(weaponAtom);
   return (
     <div className="inventory">
       <div className="text-xs text-amber-200">◇ {gold} 碎光</div>
@@ -112,7 +130,7 @@ function Inventory() {
         )}
       </div>
       <div className="text-xs text-stone-400">
-        灵弹 {stats.damage} × {stats.shots}
+        {weapon === 'greatsword' ? '大剑 · 三段连击 / 蓄力重斩' : `灵弹 ${stats.damage} × ${stats.shots}`} · Q 切换
       </div>
     </div>
   );
@@ -200,7 +218,7 @@ function Overlay({ runtime }: { runtime: GameRuntime | null }) {
         </button>
         <div className="instructions">
           <span>
-            <kbd>E</kbd> 按住蓄力 / 松开贯穿
+            <kbd>E</kbd> 按住蓄力 / 松开重击
           </span>
           <span>
             <kbd>W A S D</kbd> 移动
@@ -209,10 +227,13 @@ function Overlay({ runtime }: { runtime: GameRuntime | null }) {
             <kbd>鼠标</kbd> 瞄准 / 按住左键攻击
           </span>
           <span>
-            <kbd>空格</kbd> 闪避
+            <kbd>空格</kbd> 翻滚 · 消耗精力
           </span>
           <span>
             <kbd>左键</kbd> 靠近失衡敌人，点击处决
+          </span>
+          <span>
+            <kbd>Q</kbd> 大剑 / 灵弹
           </span>
         </div>
       </section>
@@ -291,7 +312,9 @@ function Game() {
           <Inventory />
           <div className="bottom-right">
             <Controls runtime={runtime} />
-            <span className="text-xs text-stone-500">WASD 移动 · 左键连射 / 处决 · E 蓄力 · 空格闪避 · ESC 暂停</span>
+            <span className="text-xs text-stone-500">
+              WASD 移动 · 左键连击 / 处决 · E 蓄力 · 空格翻滚 · Q 换武器 · ESC 暂停
+            </span>
           </div>
         </footer>
         <Overlay runtime={runtime} />

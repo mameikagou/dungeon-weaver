@@ -12,7 +12,9 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 .brand span { font-size: 11px; letter-spacing: 0.22em; margin-left: 8px; vertical-align: middle; }
 .vitality { margin-top: 23px; width: 225px; color: #b7c8bf; }
 .health-track { height: 5px; margin-top: 9px; background: #304342; }
-.health-track > div { background: #ace0bd; height: 100%; transition: width 0.15s; box-shadow: 0 0 16px #abe8bd33; }
+.health-track > div { background: #d26f65; height: 100%; transition: width 0.15s; box-shadow: 0 0 16px #d26f6533; }
+.stamina-track { height: 5px; margin-top: 7px; background: #304342; }
+.stamina-track > div { height: 100%; background: #9fc978; transition: width 0.08s linear; }
 .eyebrow { font-size: 10px; letter-spacing: 0.24em; color: #9fae99; }
 .floor-caption { position: absolute; left: 38px; right: 38px; bottom: 117px; display: flex; justify-content: space-between; font-size: 9px; color: #6c8584; letter-spacing: 0.2em; pointer-events: none; }
 .hud-bottom { position: absolute; bottom: 24px; left: 38px; right: 38px; border-top: 1px solid #71857933; padding-top: 18px; display: flex; justify-content: space-between; align-items: center; }

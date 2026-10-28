@@ -16,7 +16,10 @@ export class GameRuntime {
   private aimTarget: { x: number; z: number } | null = null;
   private readonly abort = new AbortController();
 
-  constructor(readonly canvas: HTMLCanvasElement, readonly bridge: UiBridge) {
+  constructor(
+    readonly canvas: HTMLCanvasElement,
+    readonly bridge: UiBridge,
+  ) {
     this.view = new GameRenderer(canvas);
     this.connect();
     this.bindInputs();
@@ -24,7 +27,7 @@ export class GameRuntime {
   }
 
   private connect(): void {
-    this.simulation.onEvent = event => {
+    this.simulation.onEvent = (event) => {
       if (event !== 'fire' && event !== 'dash') this.bridge.publish(this.simulation);
       this.audio.play(event);
     };
@@ -49,34 +52,65 @@ export class GameRuntime {
   private bindInputs(): void {
     const options = { signal: this.abort.signal };
     window.addEventListener('resize', () => this.view.resize(), options);
-    window.addEventListener('keydown', event => {
-      if (!['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'Space', 'Escape'].includes(event.code)) return;
-      event.preventDefault();
-      if (event.code === 'Escape' && !event.repeat) this.pause(!this.simulation.paused);
-      this.keys.add(event.code);
-      this.updateInput();
-    }, options);
-    window.addEventListener('keyup', event => { this.keys.delete(event.code); this.updateInput(); }, options);
-    this.canvas.addEventListener('pointermove', event => {
-      const target = this.view.aim(event.clientX, event.clientY);
-      this.aimTarget = { x: target.x, z: target.z };
-      this.updateInput();
-    }, options);
-    this.canvas.addEventListener('contextmenu', event => event.preventDefault(), options);
+    window.addEventListener(
+      'keydown',
+      (event) => {
+        if (!['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyQ', 'Space', 'Escape'].includes(event.code)) return;
+        event.preventDefault();
+        if (event.code === 'Escape' && !event.repeat) this.pause(!this.simulation.paused);
+        if (event.code === 'KeyQ' && !event.repeat)
+          this.simulation.equipWeapon(this.simulation.weapon === 'greatsword' ? 'focus' : 'greatsword');
+        this.keys.add(event.code);
+        this.updateInput();
+      },
+      options,
+    );
+    window.addEventListener(
+      'keyup',
+      (event) => {
+        this.keys.delete(event.code);
+        this.updateInput();
+      },
+      options,
+    );
+    this.canvas.addEventListener(
+      'pointermove',
+      (event) => {
+        const target = this.view.aim(event.clientX, event.clientY);
+        this.aimTarget = { x: target.x, z: target.z };
+        this.updateInput();
+      },
+      options,
+    );
+    this.canvas.addEventListener('contextmenu', (event) => event.preventDefault(), options);
     // 鼠标组合按键各自触发 mousedown；pointerdown 仅在首个按钮按下时触发。
-    this.canvas.addEventListener('mousedown', event => {
-      if (event.button === 0) this.attacking = true;
-      if (event.button === 2) this.charging = true;
-      this.audio.unlock();
-      this.updateInput();
-    }, options);
-    window.addEventListener('mouseup', event => {
-      if (event.button === 0) this.attacking = false;
-      if (event.button === 2) this.charging = false;
-      this.updateInput();
-    }, options);
+    this.canvas.addEventListener(
+      'mousedown',
+      (event) => {
+        if (event.button === 0) this.attacking = true;
+        if (event.button === 2) this.charging = true;
+        this.audio.unlock();
+        this.updateInput();
+      },
+      options,
+    );
+    window.addEventListener(
+      'mouseup',
+      (event) => {
+        if (event.button === 0) this.attacking = false;
+        if (event.button === 2) this.charging = false;
+        this.updateInput();
+      },
+      options,
+    );
     window.addEventListener('blur', () => this.pause(true), options);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) this.pause(true); }, options);
+    document.addEventListener(
+      'visibilitychange',
+      () => {
+        if (document.hidden) this.pause(true);
+      },
+      options,
+    );
   }
 
   private updateInput(): void {
@@ -84,14 +118,20 @@ export class GameRuntime {
     if (this.aimTarget) {
       const dx = this.aimTarget.x - this.simulation.player.x[0];
       const dz = this.aimTarget.z - this.simulation.player.z[0];
-      if (Math.hypot(dx, dz) > 0.001) { aimX = dx; aimZ = dz; }
+      if (Math.hypot(dx, dz) > 0.001) {
+        aimX = dx;
+        aimZ = dz;
+      }
     }
     this.simulation.setInput({
       ...this.simulation.input,
-      aimX, aimZ,
+      aimX,
+      aimZ,
       moveX: Number(this.keys.has('KeyD')) - Number(this.keys.has('KeyA')),
       moveZ: Number(this.keys.has('KeyS')) - Number(this.keys.has('KeyW')),
-      attack: this.attacking, dash: this.keys.has('Space'), charge: this.charging || this.keys.has('KeyE'),
+      attack: this.attacking,
+      dash: this.keys.has('Space'),
+      charge: this.charging || this.keys.has('KeyE'),
     });
   }
 

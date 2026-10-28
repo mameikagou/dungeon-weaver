@@ -14,6 +14,7 @@ const checks = await page.evaluate(async () => {
   });
   function setup() {
     debug.reset({ seed: 42, roomId: 'training-room' });
+    debug.equipWeapon('focus');
     debug.spawnEnemy('charger', 14.5, 7.5);
     debug.grantBoon('split-shot');
     debug.setInput({ moveX: 0, moveZ: 0, aimX: 1, aimZ: 0, attack: true, dash: false, charge: false });
@@ -46,6 +47,7 @@ expect(rewarded.boons).toContain('bounce');
 
 await page.evaluate(() => {
   window.__DEBUG__.reset({ seed: 42, roomId: 'training-room' });
+  window.__DEBUG__.equipWeapon('focus');
   window.__DEBUG__.resume();
 });
 globalThis.controlStage = '键盘移动';
@@ -90,6 +92,7 @@ globalThis.controlStage = '削韧与处决';
 const broken = await page.evaluate(() => {
   const debug = window.__DEBUG__;
   debug.reset({ seed: 42, roomId: 'training-room' });
+  debug.equipWeapon('focus');
   debug.spawnEnemy('charger', 12, 7.5);
   const input = { moveX: 0, moveZ: 0, aimX: 1, aimZ: 0, attack: true, dash: false, charge: false };
   debug.setInput(input);
@@ -123,6 +126,32 @@ expect(completed.phase).toBe('reward');
 expect(completed.riposte.ticksRemaining).toBe(0);
 expect(completed.kills).toBe(1);
 expect(completed.damageDealt).toBe(100);
+globalThis.controlStage = '大剑连段与精力';
+await page.evaluate(() => window.__DEBUG__.reset({ seed: 42, roomId: 'training-room' }));
+await page.mouse.down();
+const slash = await page.evaluate(() => window.__DEBUG__.step(1));
+expect(slash.weapon).toBe('greatsword');
+expect(slash.swing.move).toBe(0);
+expect(slash.stamina).toBe(86);
+const combo = await page.evaluate(() => window.__DEBUG__.step(55));
+expect(combo.swing.move).toBe(2);
+expect(combo.stamina).toBe(48);
+await page.mouse.up();
+await page.evaluate(() => window.__DEBUG__.step(40));
+await page.keyboard.down('e');
+const charge = await page.evaluate(() => window.__DEBUG__.step(60));
+expect(charge.chargeTicks).toBe(60);
+await page.keyboard.up('e');
+const heavy = await page.evaluate(() => window.__DEBUG__.step(1));
+expect(heavy.swing.move).toBe(3);
+expect(heavy.swing.damage).toBe(150);
+expect(heavy.stamina).toBe(20);
+await expect(page.getByRole('meter', { name: '精力' })).toHaveAttribute('aria-valuenow', '20');
+await page.evaluate(() => window.__DEBUG__.step(50));
+await page.keyboard.press('q');
+expect((await page.evaluate(() => window.__DEBUG__.getState())).weapon).toBe('focus');
+await page.keyboard.press('q');
+expect((await page.evaluate(() => window.__DEBUG__.getState())).weapon).toBe('greatsword');
 return {
   browserMatchesBun: true,
   splitStepMatches: true,
@@ -138,4 +167,8 @@ return {
   stanceBreak: true,
   mouseRiposte: true,
   executionCompleted: true,
+  mouseSwordCombo: true,
+  keyboardHeavySlash: true,
+  staminaHud: true,
+  keyboardWeaponSwitch: true,
 };

@@ -5,7 +5,8 @@ import { driveBot } from '../src/engine/bot';
 import { validateRooms } from '../src/content/rooms';
 import { boons, boonChoices } from '../src/content/boons';
 import { createUiBridge, hpAtom, goldAtom, computedStatsAtom } from '../src/ui/store';
-import { shootingScene } from './scenario';
+import { shootingScene, trainingScene } from './scenario';
+import { ROLL_TICKS } from '../src/content/weapons';
 
 function advance(simulation: Simulation, frames: number): void {
   for (let frame = 0; frame < frames; frame++) simulation.tick();
@@ -15,7 +16,9 @@ function input(simulation: Simulation, values: Partial<GameInput>): void {
   simulation.setInput({ ...simulation.input, ...values });
 }
 
-function training(): Simulation { return new Simulation(42, 'training-room'); }
+function training(): Simulation {
+  return trainingScene('focus');
+}
 
 describe('真实游戏规则', () => {
   test('固定种子和输入在不同步进分段下完全一致', () => {
@@ -89,7 +92,7 @@ describe('真实游戏规则', () => {
     const simulation = training();
     simulation.grantBoon('dash-shot');
     input(simulation, { aimX: 1, aimZ: 0, dash: true });
-    advance(simulation, 11);
+    advance(simulation, ROLL_TICKS + 1);
     input(simulation, { dash: false, charge: true });
     advance(simulation, 60);
     input(simulation, { charge: false });
@@ -104,12 +107,12 @@ describe('真实游戏规则', () => {
     simulation.grantBoon('trail');
     input(simulation, { aimX: 1, aimZ: 0, moveX: 1, dash: true });
     advance(simulation, 12);
-    expect(simulation.zones.some(zone => zone.kind === 'trail')).toBe(true);
+    expect(simulation.zones.some((zone) => zone.kind === 'trail')).toBe(true);
     expect(simulation.damageDealt).toBeGreaterThan(0);
     expect(simulation.damageDealt).toBeLessThanOrEqual(12);
     input(simulation, { dash: false, moveX: 0 });
     advance(simulation, 90);
-    expect(simulation.zones.filter(zone => zone.kind === 'trail')).toHaveLength(0);
+    expect(simulation.zones.filter((zone) => zone.kind === 'trail')).toHaveLength(0);
   });
 
   test('近距离真实击杀恢复冲刺', () => {
@@ -188,11 +191,12 @@ describe('真实游戏规则', () => {
     let sawBullet = false;
     for (let frame = 0; frame < 900; frame++) {
       driveBot(simulation);
+      input(simulation, { attack: false });
       simulation.tick();
       const state = simulation.getState();
       if (state.enemies[0]?.action === 'windup') seen.add(state.enemies[0].attack % 3);
-      if (state.zones.some(zone => zone.kind === 'blast')) sawBomb = true;
-      if (state.projectiles.some(bullet => bullet.kind === 2)) sawBullet = true;
+      if (state.zones.some((zone) => zone.kind === 'blast')) sawBomb = true;
+      if (state.projectiles.some((bullet) => bullet.kind === 2)) sawBullet = true;
     }
     expect([...seen].sort()).toEqual([0, 1, 2]);
     expect(sawBomb).toBe(true);
@@ -273,7 +277,8 @@ describe('真实游戏规则', () => {
       simulation.tick();
       for (let index = 0; index < simulation.enemies.count; index++) {
         const slot = simulation.enemies.active[index];
-        if (simulation.enemies.kind[slot] === 3 && simulation.enemies.hp[slot] < simulation.enemies.maxHp[slot] / 2) enraged = true;
+        if (simulation.enemies.kind[slot] === 3 && simulation.enemies.hp[slot] < simulation.enemies.maxHp[slot] / 2)
+          enraged = true;
       }
     }
     expect(enraged).toBe(true);

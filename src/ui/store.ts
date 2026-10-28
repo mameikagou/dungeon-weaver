@@ -1,9 +1,12 @@
 import { atom, createStore } from 'jotai/vanilla';
 import { calcPlayerStats } from '../content/boons';
 import type { Simulation, Phase } from '../engine/simulation';
+import type { Weapon } from '../content/weapons';
 
 export const hpAtom = atom(100);
 export const poiseAtom = atom(40);
+export const staminaAtom = atom(100);
+export const weaponAtom = atom<Weapon>('greatsword');
 export const combatPromptAtom = atom('');
 export const goldAtom = atom(0);
 export const enemiesAtom = atom(0);
@@ -26,6 +29,8 @@ export function createUiBridge() {
     publish(simulation: Simulation) {
       if (store.get(hpAtom) !== simulation.player.hp[0]) store.set(hpAtom, simulation.player.hp[0]);
       if (store.get(poiseAtom) !== simulation.player.poise[0]) store.set(poiseAtom, simulation.player.poise[0]);
+      if (store.get(staminaAtom) !== simulation.stamina) store.set(staminaAtom, simulation.stamina);
+      if (store.get(weaponAtom) !== simulation.weapon) store.set(weaponAtom, simulation.weapon);
       let prompt = '';
       if (simulation.riposteTicks) prompt = '致命处决 · 全程无敌';
       else if (simulation.getRiposteTarget() >= 0) prompt = '✦ 左键处决 · 松开连射后重新点击';

@@ -1,5 +1,6 @@
 import { flushSync } from 'react-dom';
 import type { GameInput } from './engine/simulation';
+import type { Weapon } from './content/weapons';
 import type { GameRuntime } from './runtime';
 import { startedAtom, pausedAtom } from './ui/store';
 
@@ -11,6 +12,10 @@ function createDebugApi(runtime: GameRuntime) {
 
   return {
     getState: () => runtime.simulation.getState(),
+    equipWeapon(weapon: Weapon) {
+      const equipped = runtime.simulation.equipWeapon(weapon);
+      return { equipped, state: sync() };
+    },
     step(frames: number) {
       if (!Number.isInteger(frames) || frames < 0 || frames > 3600) throw new Error('帧数必须是 0～3600 的整数');
       // 保留测试输入，暂停真人输入和自动时间累计。
@@ -20,8 +25,14 @@ function createDebugApi(runtime: GameRuntime) {
       for (let frame = 0; frame < frames; frame++) runtime.simulation.tick();
       return sync();
     },
-    pause() { runtime.pause(true, false); return sync(); },
-    resume() { runtime.pause(false); return sync(); },
+    pause() {
+      runtime.pause(true, false);
+      return sync();
+    },
+    resume() {
+      runtime.pause(false);
+      return sync();
+    },
     reset(options: { seed: number; roomId: string }) {
       runtime.reset(options.seed, options.roomId);
       runtime.bridge.store.set(startedAtom, true);
@@ -55,9 +66,13 @@ function createDebugApi(runtime: GameRuntime) {
 
 export function installDebug(runtime: GameRuntime) {
   window.__DEBUG__ = createDebugApi(runtime);
-  return () => { delete window.__DEBUG__; };
+  return () => {
+    delete window.__DEBUG__;
+  };
 }
 
 declare global {
-  interface Window { __DEBUG__?: ReturnType<typeof createDebugApi> }
+  interface Window {
+    __DEBUG__?: ReturnType<typeof createDebugApi>;
+  }
 }

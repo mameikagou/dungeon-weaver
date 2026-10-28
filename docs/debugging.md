@@ -8,6 +8,7 @@
 | --- | --- |
 | step(frames) | 暂停自动更新，保留测试输入，精确推进 N 个基础 tick，刷新画面和 HUD 后返回状态，保持暂停。 |
 | getState() | 返回独立 JSON 数据副本；包含玩家、当前房间所有敌人与所有弹幕。 |
+| equipWeapon(id) | id 为 greatsword 或 focus；走正式换武器条件，返回 {equipped, state}。 |
 | teleport(roomX, roomY) | 加载房间并进入出生点，清空敌人、弹幕、危险区域与动作状态，保留祝福和生命；roomX 为 0～5，roomY 为 0。 |
 | grantBoon(id) | 按真实规则获得祝福，遵循一层上限，暂停并刷新界面。 |
 | spawnEnemy(id, x, z) | 在可通行位置创建敌人，返回 {entityId, state}；类型为 charger、bomber、guard、warden。 |
@@ -33,12 +34,15 @@ player、enemies、projectiles 提供 entityId、x/z、vx/vz、hp、life、flash
 
 削韧状态包含 `poise`、`maxPoise`、`poiseRecoveryTicks`；投射物的 `poiseDamage` 表示命中削韧。敌人 `action` 可为 `stance-broken` 或 `riposte`，`timer` 为失衡剩余战斗帧。顶层 `staggerTicks` 表示玩家硬直，`riposte` 包含 `ticksRemaining`、`targetId` 和 `readyTargetId`，`stanceBreaks`、`ripostes` 为本局累计次数。`zones.owner` 记录落弹来源的敌人 ID，玩家轨迹使用 0。
 
-复现处决：训练场在 `(12, 7.5)` 创建 charger，向右连续射击到 `action === 'stance-broken'`，松开攻击并向目标移动到 `riposte.readyTargetId` 非零，然后重新按下攻击。逐帧检查第 24 个战斗帧扣血、第 48 帧完成动作。`step()` 推进基础 tick，遇到命中顿帧时应读取 `combatTick` 计算动作经过时间。完整行为回归见 `tests/poise.test.ts`。
+复现处决：训练场切换 focus，在 `(12, 7.5)` 创建 charger，向右连续射击到 `action === 'stance-broken'`，松开攻击并向目标移动到 `riposte.readyTargetId` 非零，然后重新按下攻击。逐帧检查第 24 个战斗帧扣血、第 48 帧完成动作。`step()` 推进基础 tick，遇到命中顿帧时应读取 `combatTick` 计算动作经过时间。完整行为回归见 `tests/poise.test.ts`。
+
+`weapon` 表示当前武器，`stamina` 与 `staminaRecoveryTicks` 表示精力及恢复等待时间；`swing` 包含动作索引、经过帧、锁定方向、伤害、削韧和当前刀刃角度，无挥击时为 null。动作索引 0～2 为三段轻击，3 为重击。`combo` 是下一段轻击索引。动作参数统一来自 `src/content/weapons.ts`，近战与翻滚边界回归见 `tests/melee.test.ts`。
 
 ```js
 await page.evaluate(() => {
   const debug = window.__DEBUG__;
   debug.reset({ seed: 42, roomId: 'training-room' });
+  debug.equipWeapon('focus');
   debug.grantBoon('split-shot');
   debug.spawnEnemy('charger', 14.5, 7.5);
   debug.setInput({
@@ -50,7 +54,7 @@ await page.evaluate(() => {
 return await page.screenshot({ fullPage: false });
 ```
 
-attack 支持持续按下，dash 只响应按下边沿；charge 按住蓄力，松开发射。键盘 E 和鼠标右键均绑定 charge，本机 Tabbit 右键手势未向页面传递按下事件，因此自动输入检查使用真实 E 键。截图使用 Tabbit 返回的实际文件路径。调试暂停与玩家暂停菜单分别处理，便于查看战斗现场。
+attack 支持持续按下，dash 只响应按下边沿；charge 按住蓄力，松开重斩或发射。键盘 E 和鼠标右键均绑定 charge，本机 Tabbit 右键手势未向页面传递按下事件，因此自动输入检查使用真实 E 键。截图使用 Tabbit 返回的实际文件路径。调试暂停与玩家暂停菜单分别处理，便于查看战斗现场。
 
 ## 复用 Tabbit 会话
 
@@ -73,7 +77,7 @@ bun run sim --state > artifacts/expected-journey.json
 tabbit-cli nodejs --task dungeon-weaver --tab "$GAME_TAB" --request-id gameplay-check < scripts/tabbit-check.js
 ```
 
-GAME_TAB 填入 inventory 中实际观察到的游戏 tab ID。脚本要求该页面已打开 http://localhost:4173 。它逐字段比较浏览器与 Bun 的训练场景和六房 Bot 对局，检查 180 帧与两次 90 帧相等、暂停保持状态、真实奖励卡片点击、键盘移动与冲刺、鼠标射击及 E 键蓄力，并通过真实鼠标事件检查破韧后的近身处决与奖励结算。执行期间不要修改项目文件，Vite 的热更新可能重置对局。再次执行时更换 request ID，继续复用 task 和 tab。
+GAME_TAB 填入 inventory 中实际观察到的游戏 tab ID。脚本要求该页面已打开 http://localhost:4173 。它逐字段比较浏览器与 Bun 的训练场景和六房 Bot 对局，检查 180 帧与两次 90 帧相等、暂停保持状态、真实奖励卡片点击、键盘移动与翻滚、鼠标射击及 E 键蓄力，并通过真实鼠标事件检查破韧后的近身处决与奖励结算。大剑检查包含三段连击、满蓄力重斩、精力 HUD 与 Q 键切换武器。执行期间不要修改项目文件，Vite 的热更新可能重置对局。再次执行时更换 request ID，继续复用 task 和 tab。
 
 所有调试和截图读取结束后调用一次：
 
@@ -91,6 +95,6 @@ bun run check:data
 bun test
 ```
 
-Bot 使用正式输入和奖励接口，按距离、地形、预告区域和敌人动作移动、射击与闪避，接近卫兵诱导挥击。报告输出胜负、tick、生命、击杀、伤害、承伤、DPS、弹幕容量拒绝数与实际耗时；达到 tick 上限仍未结束时标记 incomplete。它用于规则验证，操作手感由实际试玩判断。
+Bot 使用正式输入、换武器和奖励接口，按距离选择大剑或灵弹，观察精力决定退开恢复，利用失衡窗口处决。它根据地形、预告区域和敌人动作移动、攻击与翻滚。报告输出胜负、tick、生命、击杀、伤害、承伤、DPS、弹幕容量拒绝数与实际耗时；达到 tick 上限仍未结束时标记 incomplete。它用于规则验证，操作手感由实际试玩判断。
 
 check:data 逐项报告内容问题。新增武器或祝福时，使用真实内容配置验证伤害、有限触发次数、对象回收和 UI 更新。
