@@ -1,31 +1,51 @@
-# Dungeon Weaver
+# Dungeon Weaver · 苔光地牢
 
-一个计划采用 React、Babylon.js 和 TypeScript 制作的浏览器地牢动作肉鸽：探索房间、主动战斗、组合武器与祝福，挑战 Boss。
+浏览器地牢动作肉鸽原型：两间战斗房、灵弹射击、闪避、三选一奖励与通关结算。使用原创程序化角色和场景。
 
-当前交付内容是技术调研、游戏方案和调试接口契约。可运行游戏尚未实现，本文中的游戏命令与接口是后续实现目标。
+**Bun 1.3.14 + Vite + TypeScript strict + Three.js + postprocessing + React + Tailwind CSS + Jotai。** 游戏微内核为独立的纯 TypeScript，可在 Bun 中运行真实战斗与测试。
 
-## 游戏方向
+![Tabbit 中实际运行的战斗画面](docs/images/gameplay.png)
 
-- 俯视角 2.5D：3D 场景配低多边形角色或精灵动画。
-- 移动、瞄准、攻击、闪避，战斗结束后选择奖励。
-- 房间模板、敌人组合、武器与道具联动共同产生每局变化。
-- 目标单局时长 10～15 分钟，先完成一条可通关的房间路线。
-- 开发与验证可通过代码、终端和浏览器自动化完成。
+## 运行
+
+```sh
+bun install --frozen-lockfile
+bun run dev
+```
+
+打开 http://localhost:4173 。WASD 移动，鼠标瞄准，按住左键射击，空格闪避，Esc 暂停。当前操作面向桌面键鼠。
+
+```sh
+bun test
+bun run check:data
+bun run sim --seed=42
+bun run build
+bun run preview
+```
+
+生产预览地址为 http://localhost:4174 ，构建产物在 `dist/`。
+
+## 已有能力
+
+- 60Hz 固定步进、种子随机数、SoA TypedArray 对象池、二维空间网格与墙体碰撞。
+- 2 间战斗房、1 间测试庭院；5 种祝福：分裂射击、弹墙、吸血、冲刺强化、伤害强化。
+- Three.js 实例化 Billboard、4 帧精灵图集、倾斜、轻微挤压、受击闪白、顿帧、Bloom。
+- ZzFX 缓存音效与 AudioContext 压缩器，支持静音。
+- Jotai `createStore()` 与 React Provider 共用实例，仅推送变化的 HUD 数据。
+- 开发环境 `window.__DEBUG__` 支持构造场景、精确步进、结构化状态与截图。
+- Bun 无头测试和 Tabbit 浏览器测试调用同一套真实规则。
+
+对象池容量为 2000 个敌人、5000 发投射物；这些数字是容量配置。同屏性能、GC 和不同设备的帧率仍需专门测量。
 
 ## 文档
 
-| 文档 | 内容 |
-| --- | --- |
-| [游戏与技术方案](docs/design.md) | 玩法范围、代码职责、现成组件、动作与道具系统、开发顺序 |
-| [可复用技术调研](docs/research.md) | 已检查的引擎、库、脚手架、浏览器工具和原始来源 |
-| [调试与验证接口](docs/debugging.md) | `window.__GAME_DEBUG__`、精确步进、无头模拟、截图与配置检查 |
+- [架构与开发范围](docs/design.md)
+- [依赖与调研来源](docs/research.md)
+- [调试接口与 Tabbit 会话复用](docs/debugging.md)
+- [实际验证记录](docs/verification.md)
 
-## 技术分工
-
-React 管理菜单和 HUD；Babylon.js 管理画面表现；TypeScript 游戏核心管理战斗状态。实体管理复用 Miniplex，碰撞复用 Rapier 2D，地图算法与随机数复用 rot.js，数据校验复用 Zod。测试使用 Vitest、Playwright 和 Tabbit。
-
-浏览器、无头模拟器和调试入口调用同一套游戏规则。
+后续内容包括房间路线生成、更多武器与敌人、Boss、近战判定、冲刺残影及树木遮挡透视。当前原型用于验证战斗与自动化开发链路。
 
 ## 许可
 
-原创代码和文档采用 [MIT License](LICENSE)。第三方代码及美术、音频素材遵循其各自许可证。
+原创代码、文档和程序化美术采用 [MIT License](LICENSE)。第三方依赖保留各自许可与署名。

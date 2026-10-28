@@ -1,206 +1,89 @@
-# 调试与验证接口
+# 调试接口与 Tabbit 会话复用
 
-本文是待实现的接口契约。目标是让开发者和自动化工具直接构造真实战斗场景、精确推进时间、读取状态并检查画面。
+## 浏览器入口
 
-## 接入方式
+开发构建暴露 `window.__DEBUG__`，接口实现见 `src/debug.ts`。生产构建通过构建期条件排除入口。调试、普通输入和无头模拟共用真实 Simulation，对局状态仅保存在内存中。
 
-开发构建在游戏初始化完成后暴露 `window.__GAME_DEBUG__`。Tabbit 或 Playwright 通过 `page.evaluate()` 调用，复用浏览器现成的控制通道。
-
-调试 API 调用游戏核心的真实创建、更新、加成与房间加载函数。普通游玩、浏览器调试和无头模拟共享这些函数。
-
-常规发布构建不暴露此全局对象。开发入口使用构建期条件动态加载调试模块；发布验证检查页面上的对象不存在。调试场景使用内存存档，避免改动玩家正常进度。
-
-## 必需接口
-
-```ts
-interface GameDebug {
-  step(frames: number): Promise<GameState>;
-  getState(): GameState;
-  teleport(roomX: number, roomY: number): Promise<GameState>;
-  grantBoon(id: string): Promise<GameState>;
-  spawnEnemy(id: string, x: number, z: number): Promise<SpawnResult>;
-}
-
-interface SpawnResult {
-  entityId: string;
-  state: GameState;
-}
-```
-
-| 接口 | 约定 |
+| 方法 | 实际行为 |
 | --- | --- |
-| `step(frames)` | 暂停自动更新，清空自动循环尚未消费的真实时间，精确执行 N 个基础 tick；完成表现同步后返回状态，保持暂停。 |
-| `getState()` | 返回调用时的独立 JSON 数据副本；读取不推进时间，不暴露 Mesh、DOM 或内部可变引用。 |
-| `teleport(roomX, roomY)` | 参数是地牢房间网格坐标，区别于世界坐标。暂停后复用房间加载过程，将玩家放入目标房间的安全出生点；等待加载与表现完成。 |
-| `grantBoon(id)` | 暂停后按正常获得祝福的规则增加一个层数，并更新属性及 UI；遵循唯一性和层数上限。 |
-| `spawnEnemy(id, x, z)` | `id` 是敌人类型，X-Z 是当前房间局部地面坐标。暂停后创建真实敌人和碰撞体，返回新实体 ID 及状态。 |
+| step(frames) | 暂停自动更新，保留测试输入，精确推进 N 个基础 tick，刷新画面和 HUD 后返回状态，保持暂停。 |
+| getState() | 返回独立 JSON 数据副本；包含玩家、当前房间所有敌人与所有弹幕。 |
+| teleport(roomX, roomY) | 加载房间并进入出生点，清空当前敌人与弹幕，保留祝福和生命；当前支持 (0,0) 与 (1,0)。 |
+| grantBoon(id) | 按真实规则获得祝福，遵循一层上限，暂停并刷新界面。 |
+| spawnEnemy(id, x, z) | 在当前房间地面位置创建敌人，返回 {entityId, state}；当前类型为 melee。 |
+| reset({seed, roomId}) | 创建独立测试对局，暂停并显示战斗画面。 |
+| setInput(input) | 规范化移动与瞄准输入并保持暂停。 |
+| pause() / resume() | 控制自动更新并清空累计真实时间；暂停不遮挡调试画面。恢复时释放测试输入。 |
 
-`frames` 必须是 0～3600 的整数，长模拟由 CLI 执行或分段调用。`step(0)` 只暂停并同步画面。未知 ID、非法位置或不存在的房间返回带原因的错误，验证参数后才修改状态。
+方法目前同步返回状态，外部也可以使用 await 调用。参数错误在变更前报告。frames 必须为 0～3600 的整数，step(0) 可以同步画面；长模拟分段执行或走 CLI。
 
-变更请求按顺序执行，重复发起的并发变更返回 busy 错误。房间加载期间 `getState()` 返回最近一次完整状态，`ready: false`；资源加载失败给出明确错误并保留可解释的状态。
+房间 ID：moss-hall、ember-vault、training-room。祝福 ID：split-shot、bounce、leech、rush、power。
 
-## 测试所需的辅助接口
+坐标采用房间局部 X-Z 地面坐标，范围来自 20×15 房间网格。墙内或边界外的位置不可生成敌人。实体 ID 在各自对象池内单调递增，实体类型和 ID 共同识别对象。
 
-```ts
-interface DebugInput {
-  moveX: number;
-  moveZ: number;
-  aimX: number;
-  aimZ: number;
-  attack: boolean;
-  dash: boolean;
-}
+## 精确步进与状态
 
-interface DebugSession {
-  pause(): Promise<GameState>;
-  resume(): Promise<GameState>;
-  reset(options: { seed: number; roomId: string }): Promise<GameState>;
-  setInput(input: DebugInput): Promise<GameState>;
-}
+tick 每次基础更新增加 1。combatTick 在实际战斗更新时增加，顿帧和奖励界面冻结战斗。step(60) 总是增加 60 个基础 tick，渲染和 HUD 同步不会额外推进游戏。
 
-type GameDebugApi = GameDebug & DebugSession;
+状态包含 seed、rng、paused、phase、房间、tick、combatTick、simulationTimeSeconds、顿帧剩余值、冲刺状态、祝福、金币和伤害统计。
 
-declare global {
-  interface Window {
-    __GAME_DEBUG__?: GameDebugApi;
-  }
-}
+player、enemies、projectiles 提供 entityId、x/z、vx/vz、hp、life、flash、bounce 与 damage 等池字段。数组按 ID 排序，覆盖当前房间全部活动对象。状态供观察和比较使用，完整对局恢复需要另行实现。
 
-export {};
-```
-
-上述辅助方法也放在同一个 `__GAME_DEBUG__` 对象上。`reset` 使用真实房间和敌人配置，创建独立测试对局、清空输入、重新设置随机状态，并等待资源就绪。`setInput` 经过与键盘、鼠标相同的输入规范化流程；移动向量长度上限为 1，瞄准向量需有限且非零。
-
-`attack` 按武器规则处理持续按下；`dash` 通过按下边沿触发一次。测试显式设置和释放输入。`resume` 解除调试暂停并清空累计真实时间，游戏菜单的暂停状态仍然生效。
-
-## 状态结构
-
-```ts
-interface Position {
-  x: number;
-  z: number;
-}
-
-interface ActorState {
-  entityId: string;
-  kind: string;
-  position: Position;
-  velocity: Position;
-  hp: number;
-  maxHp: number;
-  action: string;
-  actionTicksRemaining: number;
-  invulnerableTicksRemaining: number;
-  statuses: Array<{ id: string; ticksRemaining: number; stacks: number }>;
-}
-
-interface ProjectileState {
-  entityId: string;
-  kind: string;
-  ownerId: string;
-  position: Position;
-  velocity: Position;
-  radius: number;
-  damage: number;
-  ticksRemaining: number;
-  pierceRemaining: number;
-  bounceRemaining: number;
-}
-
-interface GameState {
-  ready: boolean;
-  paused: boolean;
-  phase: "playing" | "reward" | "dead" | "won";
-  seed: number;
-  tick: number;
-  combatTick: number;
-  fixedDeltaSeconds: number;
-  simulationTimeSeconds: number;
-  timeScale: number;
-  hitstopTicksRemaining: number;
-  room: { id: string; roomX: number; roomY: number; cleared: boolean };
-  player: ActorState;
-  boons: Array<{ id: string; stacks: number }>;
-  enemies: ActorState[];
-  projectiles: ProjectileState[];
-  rng: { dungeon: number[]; combat: number[] };
-}
-```
-
-`enemies` 和 `projectiles` 包含当前活动房间全部实体，按实体 ID 稳定排序，不按视野裁剪。位置采用当前房间局部 X-Z 坐标，单位与物理世界一致。实体 ID 来自单调递增计数器。
-
-状态是可观测数据，包含定位问题所需字段；完整存档和物理世界恢复另用其适用的序列化能力。
-
-## 步进的精确定义
-
-每次基础 tick 对应 1/60 秒。`step(60)` 将 `tick` 精确增加 60，无论屏幕刷新率和机器速度如何。顿帧倒计时仍消耗基础 tick，`combatTick` 在实际战斗更新时递增；慢动作时按缩放时间累计推进。
-
-步进必须等待核心更新、物理更新、产生的事件和画面同步完成。同步画面只读取当前状态，不能附带执行额外战斗 tick。Promise 返回后，立即截图与 `getState()` 应对应同一状态。
-
-测试暂停后等待真实时间，tick、生命值和投射物位置应保持不变。输入、核心冷却、动画判定及物理更新不能由另一个自动循环继续推进。
-
-Playwright 时钟可以用于 UI 定时器测试，精确游戏步进以本接口返回的 tick 为准。
-
-## 浏览器调用示例
-
-以下示例用于接口实现后；场景和内容 ID 由实际配置目录提供。
-
-```ts
-await page.goto(devUrl);
-await page.waitForFunction(() => window.__GAME_DEBUG__?.getState().ready);
-
-const before = await page.evaluate(async () => {
-  const debug = window.__GAME_DEBUG__;
-  if (!debug) throw new Error("游戏调试接口尚未就绪");
-  await debug.reset({ seed: 42, roomId: "training-room" });
-  await debug.grantBoon("split-shot");
-  await debug.spawnEnemy("melee", 4, 0);
-  await debug.setInput({
+```js
+await page.evaluate(() => {
+  const debug = window.__DEBUG__;
+  debug.reset({ seed: 42, roomId: 'training-room' });
+  debug.grantBoon('split-shot');
+  debug.spawnEnemy('melee', 14.5, 7.5);
+  debug.setInput({
     moveX: 0, moveZ: 0, aimX: 1, aimZ: 0,
     attack: true, dash: false,
   });
-  return debug.getState();
+  return debug.step(12);
 });
-
-const after = await page.evaluate(() => {
-  const debug = window.__GAME_DEBUG__;
-  if (!debug) throw new Error("游戏调试接口尚未就绪");
-  return debug.step(60);
-});
-expect(after.tick).toBe(before.tick + 60);
-await page.screenshot({ path: "artifacts/split-shot.png" });
+return await page.screenshot({ fullPage: false });
 ```
 
-Tabbit 使用相同的页面求值代码，截图按安装版 skill 的返回路径读取。直接操作键盘和点击的浏览器流程也要覆盖，验证真实输入和 UI 连接。
+attack 支持持续按下，dash 只响应按下边沿。截图使用 Tabbit 返回的实际文件路径。调试暂停与玩家暂停菜单分别处理，便于查看战斗现场。
 
-## 无头模拟 CLI
+## 复用 Tabbit 会话
 
-计划提供的命令：
+整个调试工作使用同一个 task 名 `dungeon-weaver`。已有会话直接发送后续 nodejs；每次代码使用新的 request ID。已有页面先获取并复用，HMR 后等待接口就绪。不要为每次截图或步进重新创建 task、浏览器或标签页。
+
+首次需要获取已有页面时：
 
 ```sh
-npm run sim -- --weapon=bow --boons=split-shot,bounce --room=training-room --seed=42
+tabbit-cli create --task dungeon-weaver
 ```
 
-CLI 在 Node.js 中初始化与浏览器相同的核心和二维碰撞世界，加载真实内容配置。简单 Bot 通过正式输入接口移动、瞄准、攻击和闪避，运行至胜利、死亡或明确的 tick 上限。
+查看 inventory 后，记录游戏页面的实际 tab ID。后续命令同时携带相同 task 和该 tab ID，保持对已有页面的明确选择。长时间编辑代码后，先核对 inventory；会话所有权过期时重新获取同一页面或已观察到的 group ID。
 
-输出结构化战报：场景、种子、武器、祝福、结果、基础 tick、战斗时间、实际耗时、伤害、承伤、击杀、DPS 和错误详情。DPS 使用战斗时间；实际耗时用于性能测量。超时记录为未完成，异常记录为错误。
+仓库提供可重复运行的浏览器验收脚本。先启动开发服务并生成同场景的 Bun 状态：
 
-多场模拟逐场保存结果。运行速度、峰值内存和 Bot 胜率需实测；Bot 的结果不能替代真人对操作手感的判断。
+```sh
+mkdir -p artifacts
+bun tests/scenario.ts > artifacts/expected-state.json
+tabbit-cli nodejs --task dungeon-weaver --tab "$GAME_TAB" --request-id gameplay-check < scripts/tabbit-check.js
+```
 
-## 配置与画面验证
+GAME_TAB 填入 inventory 中实际观察到的游戏 tab ID。脚本要求该页面已打开 http://localhost:4173 。它逐字段比较浏览器与 Bun 的真实场景，检查 60 帧与两次 30 帧相等、暂停保持状态、真实奖励卡片点击、键盘移动与冲刺、鼠标射击。再次执行时更换 request ID，继续复用 task 和 tab。
 
-计划提供 `npm run check:data`：使用 Zod 校验字段及取值，检查武器、效果、敌人、祝福和房间之间的引用；检查地图行宽、符号、出生点与门的可达性。逐项汇总错误，包含文件和字段位置，完整列出本次发现的问题。
+所有调试和截图读取结束后调用一次：
 
-画面检查固定场景、种子、输入、摄像机、视口、资源加载状态和模拟 tick，覆盖 HUD、奖励菜单、受击、冲刺残影和 Boss 预警。保留截图、差异图与短录制，由可见性、遮挡、预警清晰度及实际状态判断问题。
+```sh
+tabbit-cli finish --task dungeon-weaver
+```
 
-测试检查行为：伤害是否正确、穿透与反弹是否按次数执行、冲刺期间是否按规则免伤、击杀是否开门、奖励是否只发一次、地图是否可通行。所有场景运行真实核心；测试断言按字段表达。
+该命令释放控制并保留页面，便于直接接手试玩。不要在连续调试命令之间调用 finish。
 
-## 第一间房的验收
+## 无头模拟与配置检查
 
-1. `reset` 后能读取玩家、敌人和投射物的结构化状态。
-2. `step(0)` 保持暂停，`step(60)` 精确增加 60 个基础 tick。
-3. `step(60)` 与分两次 `step(30)` 在相同输入下得到相同的玩法状态。
-4. 浏览器与无头运行使用相同场景和输入，逐字段核对战斗结果。
-5. `teleport`、`grantBoon`、`spawnEnemy` 可直接建立测试现场，行为与正式游戏函数一致。
-6. 真实键盘、鼠标输入能完成一次攻击和闪避，UI 正确反映状态。
-7. 截图与返回状态对应同一 tick，发布构建中没有调试全局对象。
+```sh
+bun run sim --seed=42 --boons=split-shot,bounce --ticks=7200
+bun run check:data
+bun test
+```
+
+Bot 使用正式输入和奖励接口，当前采用原地瞄准射击策略。报告输出胜负、tick、生命、击杀、伤害、承伤、DPS、弹幕容量拒绝数与实际耗时；达到 tick 上限仍未结束时标记 incomplete。它用于规则验证，操作手感由实际试玩判断。
+
+check:data 逐项报告内容问题。新增武器或祝福时，使用真实内容配置验证伤害、有限触发次数、对象回收和 UI 更新。
