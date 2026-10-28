@@ -3,6 +3,8 @@ import { calcPlayerStats } from '../content/boons';
 import type { Simulation, Phase } from '../engine/simulation';
 
 export const hpAtom = atom(100);
+export const poiseAtom = atom(40);
+export const combatPromptAtom = atom('');
 export const goldAtom = atom(0);
 export const enemiesAtom = atom(0);
 export const boonsAtom = atom<readonly string[]>([]);
@@ -15,7 +17,7 @@ export const phaseAtom = atom<Phase>('playing');
 export const pausedAtom = atom(true);
 export const startedAtom = atom(false);
 export const mutedAtom = atom(false);
-export const computedStatsAtom = atom(get => calcPlayerStats(get(boonsAtom)));
+export const computedStatsAtom = atom((get) => calcPlayerStats(get(boonsAtom)));
 
 export function createUiBridge() {
   const store = createStore();
@@ -23,6 +25,18 @@ export function createUiBridge() {
     store,
     publish(simulation: Simulation) {
       if (store.get(hpAtom) !== simulation.player.hp[0]) store.set(hpAtom, simulation.player.hp[0]);
+      if (store.get(poiseAtom) !== simulation.player.poise[0]) store.set(poiseAtom, simulation.player.poise[0]);
+      let prompt = '';
+      if (simulation.riposteTicks) prompt = '致命处决 · 全程无敌';
+      else if (simulation.getRiposteTarget() >= 0) prompt = '✦ 左键处决 · 松开连射后重新点击';
+      else if (simulation.staggerTicks) prompt = '韧性耗尽 · 短暂硬直';
+      else if (
+        simulation.enemies.active
+          .subarray(0, simulation.enemies.count)
+          .some((slot) => simulation.enemies.state[slot] === 4)
+      )
+        prompt = '✦ 敌人失衡 · 靠近金色弱点，点击左键处决';
+      if (store.get(combatPromptAtom) !== prompt) store.set(combatPromptAtom, prompt);
       if (store.get(goldAtom) !== simulation.gold) store.set(goldAtom, simulation.gold);
       if (store.get(enemiesAtom) !== simulation.enemies.count) store.set(enemiesAtom, simulation.enemies.count);
       if (store.get(roomAtom) !== simulation.room.name) store.set(roomAtom, simulation.room.name);
@@ -38,7 +52,10 @@ export function createUiBridge() {
       if (store.get(bossHpAtom) !== bossHp) store.set(bossHpAtom, bossHp);
       if (store.get(phaseAtom) !== simulation.phase) store.set(phaseAtom, simulation.phase);
       const current = store.get(boonsAtom);
-      if (current.length !== simulation.boonIds.length || current.some((id, index) => id !== simulation.boonIds[index])) {
+      if (
+        current.length !== simulation.boonIds.length ||
+        current.some((id, index) => id !== simulation.boonIds[index])
+      ) {
         store.set(boonsAtom, [...simulation.boonIds]);
       }
     },

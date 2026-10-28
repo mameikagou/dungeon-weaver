@@ -1,14 +1,14 @@
 // 通过已获取页面的 Tabbit nodejs 会话执行本文件。
 globalThis.controlStage = '步进一致性';
 await page.mouse.up();
-await page.mouse.up({button: 'right'});
+await page.mouse.up({ button: 'right' });
 await page.keyboard.up('d');
 await page.keyboard.up('Space');
 await page.keyboard.up('e');
 await page.waitForFunction(() => window.__DEBUG__?.getState().ready);
 const checks = await page.evaluate(async () => {
   const debug = window.__DEBUG__;
-  const expected = await fetch('/artifacts/expected-state.json').then(response => {
+  const expected = await fetch('/artifacts/expected-state.json').then((response) => {
     if (!response.ok) throw new Error('先运行 bun tests/scenario.ts 生成无头状态');
     return response.json();
   });
@@ -26,7 +26,11 @@ const checks = await page.evaluate(async () => {
   for (let frame = 0; frame < 10; frame++) await new Promise(requestAnimationFrame);
   const frozen = debug.getState();
   let rejected = false;
-  try { debug.step(-1); } catch { rejected = true; }
+  try {
+    debug.step(-1);
+  } catch {
+    rejected = true;
+  }
   return { expected, whole, split, frozen, rejected };
 });
 expect(checks.whole).toEqual(checks.expected);
@@ -63,7 +67,7 @@ await page.waitForFunction(() => window.__DEBUG__.getState().chargeTicks === 60)
 await page.mouse.up();
 globalThis.controlStage = '释放蓄力';
 await page.keyboard.up('e');
-await page.waitForFunction(() => window.__DEBUG__.getState().projectiles.some(bullet => bullet.kind === 1));
+await page.waitForFunction(() => window.__DEBUG__.getState().projectiles.some((bullet) => bullet.kind === 1));
 const inputState = await page.evaluate(() => window.__DEBUG__.pause());
 expect(inputState.player.x).toBeGreaterThan(11);
 expect(inputState.projectiles.length).toBeGreaterThan(0);
@@ -82,9 +86,56 @@ const journey = await page.evaluate(async () => {
 });
 expect(journey.actual).toEqual(journey.expected);
 expect(journey.actual.phase).toBe('won');
+globalThis.controlStage = '削韧与处决';
+const broken = await page.evaluate(() => {
+  const debug = window.__DEBUG__;
+  debug.reset({ seed: 42, roomId: 'training-room' });
+  debug.spawnEnemy('charger', 12, 7.5);
+  const input = { moveX: 0, moveZ: 0, aimX: 1, aimZ: 0, attack: true, dash: false, charge: false };
+  debug.setInput(input);
+  for (let tick = 0; tick < 120 && debug.getState().enemies[0]?.action !== 'stance-broken'; tick++) debug.step(1);
+  const broken = debug.getState();
+  debug.setInput({ ...input, attack: false, moveX: 1 });
+  for (let tick = 0; tick < 60 && !debug.getState().riposte.readyTargetId; tick++) debug.step(1);
+  debug.setInput({ ...input, attack: false });
+  const releasedAt = debug.getState().combatTick;
+  for (let tick = 0; tick < 10 && debug.getState().combatTick === releasedAt; tick++) debug.step(1);
+  return broken;
+});
+expect(broken.enemies[0].poise).toBe(0);
+expect(broken.enemies[0].action).toBe('stance-broken');
+await expect(page.locator('.combat-hint')).toContainText('左键处决');
+await page.mouse.move(bounds.x + bounds.width * 0.6, bounds.y + bounds.height * 0.5);
+// 页面保持暂停，真实鼠标事件写入输入后，精确推进一帧捕获动作开始。
+await page.mouse.down();
+const execution = await page.evaluate(() => window.__DEBUG__.step(1));
+await page.mouse.up();
+expect(execution.ripostes).toBe(1);
+expect(execution.riposte.ticksRemaining).toBe(47);
+await expect(page.locator('.combat-hint')).toContainText('致命处决');
+const completed = await page.evaluate(() => {
+  const debug = window.__DEBUG__;
+  const end = debug.getState().combatTick + 47;
+  for (let tick = 0; tick < 100 && debug.getState().combatTick < end; tick++) debug.step(1);
+  return debug.getState();
+});
+expect(completed.phase).toBe('reward');
+expect(completed.riposte.ticksRemaining).toBe(0);
+expect(completed.kills).toBe(1);
+expect(completed.damageDealt).toBe(100);
 return {
-  browserMatchesBun: true, splitStepMatches: true, pausedStateFrozen: true,
-  rewardClick: rewarded.room.id, keyboardMoved: true, keyboardDashed: true, mouseFired: true,
-  keyboardCharged: inputState.projectiles.some(bullet => bullet.kind === 1),
-  fullJourneyMatchesBun: true, kills: journey.actual.kills, journeyTicks: journey.actual.tick,
+  browserMatchesBun: true,
+  splitStepMatches: true,
+  pausedStateFrozen: true,
+  rewardClick: rewarded.room.id,
+  keyboardMoved: true,
+  keyboardDashed: true,
+  mouseFired: true,
+  keyboardCharged: inputState.projectiles.some((bullet) => bullet.kind === 1),
+  fullJourneyMatchesBun: true,
+  kills: journey.actual.kills,
+  journeyTicks: journey.actual.tick,
+  stanceBreak: true,
+  mouseRiposte: true,
+  executionCompleted: true,
 };

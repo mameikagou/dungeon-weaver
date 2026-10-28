@@ -31,6 +31,10 @@ player、enemies、projectiles 提供 entityId、x/z、vx/vz、hp、life、flash
 
 数组按 ID 排序，覆盖当前房间全部活动实体。状态供观察和比较使用，完整对局恢复需要另行实现。
 
+削韧状态包含 `poise`、`maxPoise`、`poiseRecoveryTicks`；投射物的 `poiseDamage` 表示命中削韧。敌人 `action` 可为 `stance-broken` 或 `riposte`，`timer` 为失衡剩余战斗帧。顶层 `staggerTicks` 表示玩家硬直，`riposte` 包含 `ticksRemaining`、`targetId` 和 `readyTargetId`，`stanceBreaks`、`ripostes` 为本局累计次数。`zones.owner` 记录落弹来源的敌人 ID，玩家轨迹使用 0。
+
+复现处决：训练场在 `(12, 7.5)` 创建 charger，向右连续射击到 `action === 'stance-broken'`，松开攻击并向目标移动到 `riposte.readyTargetId` 非零，然后重新按下攻击。逐帧检查第 24 个战斗帧扣血、第 48 帧完成动作。`step()` 推进基础 tick，遇到命中顿帧时应读取 `combatTick` 计算动作经过时间。完整行为回归见 `tests/poise.test.ts`。
+
 ```js
 await page.evaluate(() => {
   const debug = window.__DEBUG__;
@@ -69,7 +73,7 @@ bun run sim --state > artifacts/expected-journey.json
 tabbit-cli nodejs --task dungeon-weaver --tab "$GAME_TAB" --request-id gameplay-check < scripts/tabbit-check.js
 ```
 
-GAME_TAB 填入 inventory 中实际观察到的游戏 tab ID。脚本要求该页面已打开 http://localhost:4173 。它逐字段比较浏览器与 Bun 的训练场景和六房 Bot 对局，检查 180 帧与两次 90 帧相等、暂停保持状态、真实奖励卡片点击、键盘移动与冲刺、鼠标射击及 E 键蓄力。执行期间不要修改项目文件，Vite 的热更新可能重置对局。再次执行时更换 request ID，继续复用 task 和 tab。
+GAME_TAB 填入 inventory 中实际观察到的游戏 tab ID。脚本要求该页面已打开 http://localhost:4173 。它逐字段比较浏览器与 Bun 的训练场景和六房 Bot 对局，检查 180 帧与两次 90 帧相等、暂停保持状态、真实奖励卡片点击、键盘移动与冲刺、鼠标射击及 E 键蓄力，并通过真实鼠标事件检查破韧后的近身处决与奖励结算。执行期间不要修改项目文件，Vite 的热更新可能重置对局。再次执行时更换 request ID，继续复用 task 和 tab。
 
 所有调试和截图读取结束后调用一次：
 

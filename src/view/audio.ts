@@ -3,12 +3,14 @@ import type { GameEvent } from '../engine/simulation';
 
 const sounds = {
   fire: [0.13, 0, 680, 0.002, 0.015, 0.07, 1, 1, -7],
-  heavy: [0.20, 0, 140, 0.002, 0.06, 0.2, 2, 1, -1],
+  heavy: [0.2, 0, 140, 0.002, 0.06, 0.2, 2, 1, -1],
   hurt: [0.16, 0, 95, 0.002, 0.04, 0.15, 3, 1, -2],
   block: [0.08, 0, 1100, 0.001, 0.02, 0.06, 1],
+  'stance-break': [0.2, 0, 1250, 0.001, 0.06, 0.35, 1, 1, -0.5],
+  riposte: [0.24, 0, 85, 0.002, 0.1, 0.32, 2, 1, -1],
   warning: [0.05, 0, 420, 0.04, 0.04, 0.1, 0],
   hit: [0.13, 0, 170, 0.002, 0.02, 0.09, 2, 1, -3],
-  dash: [0.10, 0, 320, 0.015, 0.03, 0.15, 4, 1, 1],
+  dash: [0.1, 0, 320, 0.015, 0.03, 0.15, 4, 1, 1],
   clear: [0.16, 0, 880, 0.01, 0.12, 0.3, 0, 1, 1],
 };
 
@@ -35,7 +37,7 @@ export class GameAudio {
         this.buffers.set(name, buffer);
       }
     }
-    void ZZFX.audioContext.resume().catch(error => console.warn('音频暂不可用', error));
+    void ZZFX.audioContext.resume().catch((error) => console.warn('音频暂不可用', error));
   }
 
   play(event: GameEvent): void {
@@ -46,7 +48,10 @@ export class GameAudio {
     source.buffer = buffer;
     source.connect(this.gain);
     this.sources.add(source);
-    source.onended = () => { this.sources.delete(source); source.disconnect(); };
+    source.onended = () => {
+      this.sources.delete(source);
+      source.disconnect();
+    };
     source.start();
   }
 

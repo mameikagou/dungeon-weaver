@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { BloomEffect, EffectComposer, EffectPass, RenderPass } from 'postprocessing';
 import type { EntityPool } from '../engine/pool';
-import type { Simulation } from '../engine/simulation';
+import { RIPOSTE_TICKS, type Simulation } from '../engine/simulation';
 import { ROOM_HEIGHT, ROOM_WIDTH } from '../content/rooms';
 import { enemyTypes } from '../content/enemies';
 
@@ -188,6 +188,16 @@ export class GameRenderer {
     new THREE.BoxGeometry(0.8, 0.17, 0.2),
     new THREE.MeshBasicMaterial({ color: '#e5f8b9' }),
   );
+  private readonly poiseBars = new THREE.InstancedMesh(
+    new THREE.PlaneGeometry(1, 0.055),
+    new THREE.MeshBasicMaterial({ color: '#efc879', depthTest: false }),
+    2001,
+  );
+  private readonly weakPoints = new THREE.InstancedMesh(
+    new THREE.RingGeometry(0.12, 0.2, 24),
+    new THREE.MeshBasicMaterial({ color: '#ffe291', depthTest: false }),
+    2000,
+  );
   private readonly chargeRing = new THREE.Mesh(
     new THREE.RingGeometry(0.8, 0.9, 40),
     new THREE.MeshBasicMaterial({ color: '#e9f5a7', transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
@@ -230,10 +240,13 @@ export class GameRenderer {
       this.weapon,
       this.chargeRing,
       this.dashBar,
+      this.poiseBars,
+      this.weakPoints,
     );
     for (const mesh of [this.zoneRings, this.zoneFills, this.warnings, this.swings, this.fans, this.sparks])
       mesh.frustumCulled = false;
     this.bullets.frustumCulled = this.shadows.frustumCulled = false;
+    this.poiseBars.frustumCulled = this.weakPoints.frustumCulled = false;
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.composer.addPass(
@@ -327,9 +340,18 @@ export class GameRenderer {
     this.bullets.instanceMatrix.needsUpdate = true;
     if (this.bullets.instanceColor) this.bullets.instanceColor.needsUpdate = true;
     this.drawCombatIndicators(simulation);
+    this.drawPoise(simulation);
     this.drawEffects(simulation);
-    this.camera.position.x =
-      10 + (simulation.shakeTicks ? Math.sin(simulation.combatTick * 2.3) * 0.055 * simulation.shakeTicks : 0);
+    const focus = simulation.riposteTicks ? Math.sin(Math.PI * (1 - simulation.riposteTicks / RIPOSTE_TICKS)) : 0;
+    const focusX = (simulation.player.x[0] + simulation.riposteX) / 2;
+    const focusZ = (simulation.player.z[0] + simulation.riposteZ) / 2;
+    const shake = simulation.shakeTicks ? Math.sin(simulation.combatTick * 2.3) * 0.055 * simulation.shakeTicks : 0;
+    this.camera.position.set(10 + (focusX - 10) * focus + shake, 24, 31.5 + (focusZ - 7.5) * focus);
+    const zoom = 1 + focus * 0.4;
+    if (this.camera.zoom !== zoom) {
+      this.camera.zoom = zoom;
+      this.camera.updateProjectionMatrix();
+    }
     this.composer.render(0);
   }
 
@@ -338,9 +360,10 @@ export class GameRenderer {
     const size = !player && pool.kind[slot] === 3 ? 1.8 : 1;
     const moving = Math.hypot(pool.vx[slot], pool.vz[slot]) > 0.1;
     const bob = Math.sin(simulation.combatTick * (moving ? 0.3 : 0.07)) * (moving ? 0.045 : 0.02);
-    this.dummy.position.set(pool.x[slot], 0.62 * size + bob, pool.z[slot]);
+    const kneeling = !player && pool.state[slot] >= 4;
+    this.dummy.position.set(pool.x[slot], (kneeling ? 0.38 : 0.62) * size + bob, pool.z[slot]);
     this.dummy.quaternion.copy(this.camera.quaternion);
-    const squash = player && simulation.chargeTicks > 0 ? 0.86 : 1;
+    const squash = kneeling ? 0.58 : player && (simulation.chargeTicks > 0 || simulation.staggerTicks > 0) ? 0.86 : 1;
     this.dummy.scale.set((1.05 * size) / squash, 1.25 * size * squash, 1);
     if (player && simulation.phase === 'dead') {
       this.dummy.rotateZ(Math.PI / 2);
@@ -362,12 +385,17 @@ export class GameRenderer {
   private drawCombatIndicators(simulation: Simulation): void {
     const { player, enemies, input } = simulation;
     const recoil = simulation.recoilTicks * 0.025;
-    this.weapon.position.set(
-      player.x[0] + input.aimX * (0.55 - recoil),
-      0.7,
-      player.z[0] + input.aimZ * (0.55 - recoil),
-    );
-    this.weapon.rotation.y = -Math.atan2(input.aimZ, input.aimX);
+    const executing = simulation.riposteTicks > 0;
+    const dx = executing ? simulation.riposteX - player.x[0] : input.aimX;
+    const dz = executing ? simulation.riposteZ - player.z[0] : input.aimZ;
+    const distance = Math.max(0.001, Math.hypot(dx, dz));
+    const reach = executing
+      ? 0.55 + Math.sin((Math.PI * simulation.riposteTicks) / RIPOSTE_TICKS) * 0.65
+      : 0.55 - recoil;
+    this.weapon.position.set(player.x[0] + (dx / distance) * reach, 0.7, player.z[0] + (dz / distance) * reach);
+    this.weapon.rotation.y = -Math.atan2(dz, dx);
+    this.weapon.material.color.set(executing ? '#ffe291' : '#e5f8b9');
+    this.weapon.scale.x = executing ? 1.5 : 1;
     this.weapon.visible = simulation.phase !== 'dead';
     this.chargeRing.visible = simulation.chargeTicks > 0;
     this.chargeRing.position.set(player.x[0], 0.045, player.z[0]);
@@ -383,7 +411,7 @@ export class GameRenderer {
       const slot = enemies.active[index];
       const kind = enemies.kind[slot];
       const windup = enemies.state[slot] === 1;
-      const shield = kind === 2 && enemies.state[slot] !== 3;
+      const shield = kind === 2 && enemies.state[slot] < 3;
       const fan = kind === 3 && enemies.attack[slot] % 3 === 2;
       if (windup && (kind === 2 || fan)) {
         const mesh = fan ? this.fans : this.swings;
@@ -411,6 +439,28 @@ export class GameRenderer {
     this.warnings.instanceMatrix.needsUpdate = true;
     if (this.warnings.instanceColor) this.warnings.instanceColor.needsUpdate = true;
     this.swings.instanceMatrix.needsUpdate = this.fans.instanceMatrix.needsUpdate = true;
+  }
+
+  private drawPoise(simulation: Simulation): void {
+    this.poiseBars.count = this.weakPoints.count = 0;
+    const pool = simulation.enemies;
+    for (let index = 0; index < pool.count; index++) {
+      const slot = pool.active[index];
+      const size = pool.kind[slot] === 3 ? 1.8 : 1;
+      this.dummy.quaternion.copy(this.camera.quaternion);
+      if (pool.state[slot] >= 4) {
+        this.dummy.position.set(pool.x[slot], size * 0.55, pool.z[slot] + 0.1);
+        this.dummy.scale.setScalar(1 + Math.sin(simulation.combatTick * 0.2) * 0.15);
+        this.dummy.updateMatrix();
+        this.weakPoints.setMatrixAt(this.weakPoints.count++, this.dummy.matrix);
+      } else if (pool.poise[slot] < pool.maxPoise[slot]) {
+        this.dummy.position.set(pool.x[slot], size * 1.3, pool.z[slot]);
+        this.dummy.scale.set((size * pool.poise[slot]) / pool.maxPoise[slot], 1, 1);
+        this.dummy.updateMatrix();
+        this.poiseBars.setMatrixAt(this.poiseBars.count++, this.dummy.matrix);
+      }
+    }
+    this.poiseBars.instanceMatrix.needsUpdate = this.weakPoints.instanceMatrix.needsUpdate = true;
   }
 
   private drawEffects(simulation: Simulation): void {
@@ -491,6 +541,8 @@ export class GameRenderer {
       this.swings,
       this.fans,
       this.sparks,
+      this.poiseBars,
+      this.weakPoints,
     ]) {
       mesh.geometry.dispose();
       mesh.material.dispose();

@@ -7,6 +7,8 @@ import { GameRuntime } from '../runtime';
 import {
   createUiBridge,
   hpAtom,
+  poiseAtom,
+  combatPromptAtom,
   goldAtom,
   enemiesAtom,
   boonsAtom,
@@ -24,6 +26,7 @@ import {
 
 function Vitality() {
   const hp = useAtomValue(hpAtom);
+  const poise = useAtomValue(poiseAtom);
   return (
     <div className="vitality">
       <div className="flex justify-between text-xs tracking-widest">
@@ -33,6 +36,7 @@ function Vitality() {
       <div className="health-track">
         <div style={{ width: `${hp}%` }} />
       </div>
+      <div className="mt-2 text-xs text-amber-200">韧性 {poise} / 40</div>
     </div>
   );
 }
@@ -67,6 +71,7 @@ function Journey() {
 
 function CombatCaption() {
   const hint = useAtomValue(hintAtom);
+  const prompt = useAtomValue(combatPromptAtom);
   const bossHp = useAtomValue(bossHpAtom);
   return (
     <>
@@ -80,7 +85,7 @@ function CombatCaption() {
           </div>
         </div>
       )}
-      <div className="combat-hint">{hint}</div>
+      <div className="combat-hint">{prompt || hint}</div>
     </>
   );
 }
@@ -206,6 +211,9 @@ function Overlay({ runtime }: { runtime: GameRuntime | null }) {
           <span>
             <kbd>空格</kbd> 闪避
           </span>
+          <span>
+            <kbd>左键</kbd> 靠近失衡敌人，点击处决
+          </span>
         </div>
       </section>
     </div>
@@ -283,7 +291,7 @@ function Game() {
           <Inventory />
           <div className="bottom-right">
             <Controls runtime={runtime} />
-            <span className="text-xs text-stone-500">WASD 移动 · 左键连射 · E 蓄力 · 空格闪避 · ESC 暂停</span>
+            <span className="text-xs text-stone-500">WASD 移动 · 左键连射 / 处决 · E 蓄力 · 空格闪避 · ESC 暂停</span>
           </div>
         </footer>
         <Overlay runtime={runtime} />

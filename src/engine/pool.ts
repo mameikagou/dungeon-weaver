@@ -20,6 +20,10 @@ export class EntityPool {
   readonly maxHp: Float32Array;
   readonly attack: Int32Array;
   readonly pierce: Int32Array;
+  readonly poise: Float32Array;
+  readonly maxPoise: Float32Array;
+  readonly poiseDelay: Int32Array;
+  readonly poiseDamage: Float32Array;
   private readonly free: Int32Array;
   private readonly index: Int32Array;
   private freeCount: number;
@@ -48,6 +52,10 @@ export class EntityPool {
     this.maxHp = new Float32Array(capacity);
     this.attack = new Int32Array(capacity);
     this.pierce = new Int32Array(capacity);
+    this.poise = new Float32Array(capacity);
+    this.maxPoise = new Float32Array(capacity);
+    this.poiseDelay = new Int32Array(capacity);
+    this.poiseDamage = new Float32Array(capacity);
     this.index = new Int32Array(capacity).fill(-1);
     this.free = Int32Array.from({ length: capacity }, (_, slot) => capacity - slot - 1);
     this.freeCount = capacity;
@@ -64,6 +72,7 @@ export class EntityPool {
     this.life[slot] = this.flash[slot] = this.bounce[slot] = 0;
     this.kind[slot] = this.state[slot] = this.timer[slot] = this.attack[slot] = this.pierce[slot] = 0;
     this.facingX[slot] = this.facingZ[slot] = this.maxHp[slot] = 0;
+    this.poise[slot] = this.maxPoise[slot] = this.poiseDelay[slot] = this.poiseDamage[slot] = 0;
     return slot;
   }
 

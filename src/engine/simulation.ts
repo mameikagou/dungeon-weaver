@@ -6,6 +6,10 @@ import { SeededRNG } from './random';
 import { SpatialGrid } from './spatial-grid';
 
 export const FIXED_DELTA = 1 / 60;
+export const STANCE_BREAK_TICKS = 120;
+export const RIPOSTE_TICKS = 48;
+export const RIPOSTE_RANGE = 1.6;
+const POISE_RECOVERY_TICKS = 300;
 const NEIGHBORS = [-1, 1, -ROOM_WIDTH, ROOM_WIDTH];
 export interface GameInput {
   moveX: number;
@@ -16,7 +20,8 @@ export interface GameInput {
   dash: boolean;
   charge: boolean;
 }
-export type GameEvent = 'hud' | 'fire' | 'heavy' | 'hit' | 'hurt' | 'block' | 'dash' | 'clear' | 'warning';
+export type GameEvent =
+  'hud' | 'fire' | 'heavy' | 'hit' | 'hurt' | 'block' | 'dash' | 'clear' | 'warning' | 'stance-break' | 'riposte';
 export type Phase = 'playing' | 'reward' | 'dead' | 'won';
 export interface Zone {
   x: number;
@@ -25,6 +30,7 @@ export interface Zone {
   startsAt: number;
   endsAt: number;
   kind: 'blast' | 'trail';
+  owner: number;
 }
 export interface VisualEffect {
   x: number;
@@ -70,6 +76,16 @@ export class Simulation {
   shakeTicks = 0;
   wave = 0;
   waveDelay = 0;
+  staggerTicks = 0;
+  riposteTicks = 0;
+  riposteTarget = 0;
+  riposteX = 0;
+  riposteZ = 0;
+  ripostes = 0;
+  stanceBreaks = 0;
+  private riposteSlot = -1;
+  private attackHeld = false;
+  private readyTarget = 0;
   private chargeHeld = false;
   private chargeCancelled = false;
   private dashTrail = false;
@@ -96,6 +112,7 @@ export class Simulation {
     this.player.allocate();
     this.player.hp[0] = 100;
     this.player.radius[0] = 0.3;
+    this.player.maxPoise[0] = 40;
     this.loadRoom(room);
   }
 
@@ -133,17 +150,54 @@ export class Simulation {
     this.grid.rebuild(this.enemies);
     this.updateBullets();
     this.updateZones();
-    if (this.encounter && !this.enemies.count && this.phase === 'playing') {
+    const target = this.getRiposteTarget();
+    const readyTarget = target < 0 ? 0 : this.enemies.id[target];
+    if (this.readyTarget !== readyTarget) {
+      this.readyTarget = readyTarget;
+      this.onEvent('hud');
+    }
+    if (this.encounter && !this.enemies.count && !this.riposteTicks && this.phase === 'playing') {
       this.finishWave();
     }
   }
 
   private updatePlayer(): void {
+    const pressed = this.input.attack && !this.attackHeld;
+    this.attackHeld = this.input.attack;
     if (this.invulnerable > 0) this.invulnerable--;
     if (this.dashCooldown > 0) this.dashCooldown--;
     if (this.player.flash[0] > 0) this.player.flash[0]--;
     if (this.recoilTicks > 0) this.recoilTicks--;
     if (this.empoweredTicks > 0) this.empoweredTicks--;
+    this.recoverPoise(this.player, 0);
+    if (this.riposteTicks) {
+      this.updateRiposte();
+      return;
+    }
+    if (this.staggerTicks) {
+      this.staggerTicks--;
+      this.player.vx[0] = this.player.vz[0] = 0;
+      if (!this.staggerTicks) {
+        this.player.poise[0] = this.player.maxPoise[0];
+        this.onEvent('hud');
+      }
+      return;
+    }
+    const target = pressed ? this.getRiposteTarget() : -1;
+    if (target >= 0 && !this.input.dash && !this.input.charge) {
+      this.riposteSlot = target;
+      this.riposteTarget = this.enemies.id[target];
+      this.riposteX = this.enemies.x[target];
+      this.riposteZ = this.enemies.z[target];
+      this.enemies.state[target] = 5;
+      this.enemies.timer[target] = 0;
+      this.riposteTicks = RIPOSTE_TICKS;
+      this.cancelCharge();
+      this.ripostes++;
+      this.updateRiposte();
+      this.onEvent('hud');
+      return;
+    }
     if (this.input.dash && !this.dashHeld && !this.dashCooldown) this.startDash();
     this.dashHeld = this.input.dash;
     const dashing = this.dashTicks > 0;
@@ -160,6 +214,7 @@ export class Simulation {
         z: this.player.z[0],
         radius: 0.6,
         kind: 'trail',
+        owner: 0,
         startsAt: this.combatTick,
         endsAt: this.combatTick + 60,
       });
@@ -174,6 +229,76 @@ export class Simulation {
     }
     this.chargeHeld = this.input.charge;
     if (this.input.attack && !this.input.charge && !dashing && !this.fireCooldown) this.fire(0);
+  }
+
+  getRiposteTarget(): number {
+    if (this.phase !== 'playing' || this.riposteTicks || this.staggerTicks || this.dashTicks || this.chargeTicks)
+      return -1;
+    let nearest = -1;
+    let distance = RIPOSTE_RANGE;
+    for (let index = 0; index < this.enemies.count; index++) {
+      const slot = this.enemies.active[index];
+      if (this.enemies.state[slot] !== 4) continue;
+      const candidate = Math.hypot(this.player.x[0] - this.enemies.x[slot], this.player.z[0] - this.enemies.z[slot]);
+      if (candidate <= distance && this.lineOfSight(this.enemies.x[slot], this.enemies.z[slot])) {
+        nearest = slot;
+        distance = candidate;
+      }
+    }
+    return nearest;
+  }
+
+  private updateRiposte(): void {
+    this.player.vx[0] = this.player.vz[0] = 0;
+    this.invulnerable = 1;
+    this.dashHeld = this.input.dash;
+    this.riposteTicks--;
+    const slot = this.riposteSlot;
+    // 对象池槽位会复用，处决只能命中开始时锁定的实体。
+    const alive = slot >= 0 && this.enemies.id[slot] === this.riposteTarget;
+    if (alive && this.riposteTicks === RIPOSTE_TICKS / 2) {
+      this.hitEnemy(slot, calcPlayerStats(this.boonIds).damage * 15, true, 0, true);
+      this.shakeTicks = 10;
+      this.onEvent('riposte');
+    }
+    if (!this.riposteTicks) {
+      if (alive) {
+        this.enemies.poise[slot] = this.enemies.maxPoise[slot];
+        this.enemies.poiseDelay[slot] = 0;
+        this.enemies.state[slot] = 3;
+        this.enemies.timer[slot] = 30;
+      }
+      this.riposteTarget = 0;
+      this.riposteSlot = -1;
+      this.onEvent('hud');
+    }
+  }
+
+  private recoverPoise(pool: EntityPool, slot: number): void {
+    if (pool.poiseDelay[slot] > 0 && --pool.poiseDelay[slot] === 0) {
+      pool.poise[slot] = pool.maxPoise[slot];
+      this.onEvent('hud');
+    }
+  }
+
+  private damagePoise(slot: number, amount: number): void {
+    const pool = this.enemies;
+    if (amount <= 0 || pool.state[slot] >= 4) return;
+    pool.poise[slot] = Math.max(0, pool.poise[slot] - amount);
+    pool.poiseDelay[slot] = POISE_RECOVERY_TICKS;
+    if (pool.poise[slot]) return;
+    pool.state[slot] = 4;
+    pool.timer[slot] = STANCE_BREAK_TICKS;
+    pool.vx[slot] = pool.vz[slot] = 0;
+    this.cancelWarnings(pool.id[slot]);
+    this.stanceBreaks++;
+    this.onEvent('stance-break');
+  }
+
+  private cancelWarnings(owner: number): void {
+    for (const zone of this.zones) {
+      if (zone.owner === owner && zone.startsAt > this.combatTick) zone.endsAt = this.combatTick;
+    }
   }
 
   cancelCharge(): void {
@@ -216,6 +341,7 @@ export class Simulation {
       this.bullets.vx[slot] = Math.cos(angle) * speed;
       this.bullets.vz[slot] = Math.sin(angle) * speed;
       this.bullets.damage[slot] = stats.damage * (charge ? 1 + 4 * charge : 1) * (this.empoweredTicks ? 2 : 1);
+      this.bullets.poiseDamage[slot] = 5 + 25 * charge;
       this.bullets.radius[slot] = charge ? 0.22 : 0.12;
       this.bullets.life[slot] = 100;
       this.bullets.bounce[slot] = context.bounce;
@@ -260,10 +386,11 @@ export class Simulation {
     for (let index = 0; index < this.enemies.count; index++) {
       const slot = this.enemies.active[index];
       if (this.enemies.flash[slot] > 0) this.enemies.flash[slot]--;
+      if (this.enemies.state[slot] < 4) this.recoverPoise(this.enemies, slot);
       this.updateEnemyAction(slot);
       this.move(this.enemies, slot);
       const distance = Math.hypot(this.enemies.x[slot] - this.player.x[0], this.enemies.z[slot] - this.player.z[0]);
-      if (distance < this.enemies.radius[slot] + 0.3 && this.enemies.state[slot] !== 3)
+      if (distance < this.enemies.radius[slot] + 0.3 && this.enemies.state[slot] < 3)
         this.hurtPlayer(this.enemies.damage[slot]);
     }
   }
@@ -274,6 +401,12 @@ export class Simulation {
     const distance = Math.hypot(this.player.x[0] - pool.x[slot], this.player.z[0] - pool.z[slot]);
     pool.vx[slot] = pool.vz[slot] = 0;
     if (pool.timer[slot] > 0) pool.timer[slot]--;
+    if (pool.state[slot] === 4 && !pool.timer[slot]) {
+      pool.poise[slot] = pool.maxPoise[slot];
+      pool.state[slot] = 3;
+      pool.timer[slot] = 30;
+      this.onEvent('hud');
+    }
     if (pool.state[slot] === 0) {
       this.steerEnemy(slot);
       pool.facingX[slot] = (this.player.x[0] - pool.x[slot]) / Math.max(0.001, distance);
@@ -337,6 +470,7 @@ export class Simulation {
           z,
           radius: kind === 3 ? 1.55 : 1.25,
           kind: 'blast',
+          owner: pool.id[slot],
           startsAt: this.combatTick + 60,
           endsAt: this.combatTick + 120,
         });
@@ -384,6 +518,13 @@ export class Simulation {
     if (this.invulnerable || this.phase !== 'playing') return;
     const damage = Math.min(this.player.hp[0], amount);
     this.player.hp[0] -= damage;
+    this.player.poise[0] = Math.max(0, this.player.poise[0] - amount);
+    this.player.poiseDelay[0] = POISE_RECOVERY_TICKS;
+    if (!this.player.poise[0]) {
+      this.staggerTicks = 30;
+      this.dashTicks = 0;
+      this.cancelCharge();
+    }
     this.damageTaken += damage;
     this.player.flash[0] = 12;
     this.invulnerable = 45;
@@ -469,16 +610,17 @@ export class Simulation {
       const facing = pool.vx[slot] * this.enemies.facingX[enemy] + pool.vz[slot] * this.enemies.facingZ[enemy];
       if (
         this.enemies.kind[enemy] === 2 &&
-        this.enemies.state[enemy] !== 3 &&
+        this.enemies.state[enemy] < 3 &&
         facing < -0.5 * Math.hypot(pool.vx[slot], pool.vz[slot])
       ) {
         this.addVisual('block', nextX, nextZ);
+        this.damagePoise(enemy, pool.poiseDamage[slot] / 2);
         this.onEvent('block');
         this.removeBullet(slot);
         break;
       }
       hits?.add(this.enemies.id[enemy]);
-      this.hitEnemy(enemy, pool.damage[slot], pool.kind[slot] === 1);
+      this.hitEnemy(enemy, pool.damage[slot], pool.kind[slot] === 1, pool.poiseDamage[slot]);
       if (--pool.pierce[slot] <= 0) {
         this.removeBullet(slot);
         break;
@@ -491,7 +633,8 @@ export class Simulation {
     this.bullets.remove(slot);
   }
 
-  private hitEnemy(slot: number, damage: number, heavy = false): void {
+  private hitEnemy(slot: number, damage: number, heavy = false, poiseDamage = 0, execution = false): void {
+    if (this.enemies.state[slot] === 5 && !execution) return;
     this.damageDealt += Math.min(this.enemies.hp[slot], damage);
     this.enemies.hp[slot] -= damage;
     this.enemies.flash[slot] = 7;
@@ -503,7 +646,11 @@ export class Simulation {
     const push = heavy ? 0.5 : 0.12;
     const pushedX = x + ((x - this.player.x[0]) / distance) * push;
     const pushedZ = z + ((z - this.player.z[0]) / distance) * push;
-    if (this.enemies.kind[slot] !== 3 && canStand(this.room, pushedX, pushedZ, this.enemies.radius[slot])) {
+    if (
+      !execution &&
+      this.enemies.kind[slot] !== 3 &&
+      canStand(this.room, pushedX, pushedZ, this.enemies.radius[slot])
+    ) {
       this.enemies.x[slot] = pushedX;
       this.enemies.z[slot] = pushedZ;
     }
@@ -516,9 +663,12 @@ export class Simulation {
         this.player.hp[0] = Math.min(100, this.player.hp[0] + 3);
       }
       this.addVisual('death', x, z);
+      this.cancelWarnings(this.enemies.id[slot]);
       this.enemies.remove(slot);
       this.gold += 5;
       this.kills++;
+    } else {
+      this.damagePoise(slot, poiseDamage);
     }
     this.onEvent('hit');
   }
@@ -533,6 +683,7 @@ export class Simulation {
     this.enemies.x[slot] = x;
     this.enemies.z[slot] = z;
     this.enemies.hp[slot] = this.enemies.maxHp[slot] = definition.hp;
+    this.enemies.poise[slot] = this.enemies.maxPoise[slot] = definition.poise;
     this.enemies.radius[slot] = definition.radius;
     this.enemies.speed[slot] = definition.speed * (0.95 + this.rng.next() * 0.1);
     this.enemies.damage[slot] = definition.damage;
@@ -587,6 +738,11 @@ export class Simulation {
     this.dashTicks = this.dashCooldown = this.fireCooldown = this.hitstop = 0;
     this.wave = this.waveDelay = this.chargeTicks = this.recoilTicks = this.empoweredTicks = this.shakeTicks = 0;
     this.chargeHeld = this.dashHeld = this.chargeCancelled = this.dashTrail = false;
+    this.attackHeld = false;
+    this.staggerTicks = this.riposteTicks = this.riposteTarget = this.readyTarget = 0;
+    this.riposteSlot = -1;
+    this.player.poise[0] = this.player.maxPoise[0];
+    this.player.poiseDelay[0] = 0;
     this.player.flash[0] = 0;
     this.invulnerable = 30;
     this.player.vx[0] = this.player.vz[0] = 0;
@@ -686,6 +842,10 @@ export class Simulation {
       chargeTicks: this.chargeTicks,
       empoweredTicks: this.empoweredTicks,
       recoilTicks: this.recoilTicks,
+      staggerTicks: this.staggerTicks,
+      riposte: { ticksRemaining: this.riposteTicks, targetId: this.riposteTarget, readyTargetId: this.readyTarget },
+      ripostes: this.ripostes,
+      stanceBreaks: this.stanceBreaks,
       room: {
         id: this.room.id,
         roomX: this.roomX,
@@ -735,6 +895,10 @@ export class Simulation {
       maxHp: pool.maxHp[slot],
       attack: pool.attack[slot],
       pierce: pool.pierce[slot],
+      poise: pool.poise[slot],
+      maxPoise: pool.maxPoise[slot],
+      poiseRecoveryTicks: pool.poiseDelay[slot],
+      poiseDamage: pool.poiseDamage[slot],
     })).sort((first, second) => first.entityId - second.entityId);
   }
 }
