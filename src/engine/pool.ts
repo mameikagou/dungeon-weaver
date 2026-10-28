@@ -12,6 +12,14 @@ export class EntityPool {
   readonly bounce: Int32Array;
   readonly id: Uint32Array;
   readonly active: Int32Array;
+  readonly kind: Uint8Array;
+  readonly state: Uint8Array;
+  readonly timer: Int32Array;
+  readonly facingX: Float32Array;
+  readonly facingZ: Float32Array;
+  readonly maxHp: Float32Array;
+  readonly attack: Int32Array;
+  readonly pierce: Int32Array;
   private readonly free: Int32Array;
   private readonly index: Int32Array;
   private freeCount: number;
@@ -32,6 +40,14 @@ export class EntityPool {
     this.bounce = new Int32Array(capacity);
     this.id = new Uint32Array(capacity);
     this.active = new Int32Array(capacity);
+    this.kind = new Uint8Array(capacity);
+    this.state = new Uint8Array(capacity);
+    this.timer = new Int32Array(capacity);
+    this.facingX = new Float32Array(capacity);
+    this.facingZ = new Float32Array(capacity);
+    this.maxHp = new Float32Array(capacity);
+    this.attack = new Int32Array(capacity);
+    this.pierce = new Int32Array(capacity);
     this.index = new Int32Array(capacity).fill(-1);
     this.free = Int32Array.from({ length: capacity }, (_, slot) => capacity - slot - 1);
     this.freeCount = capacity;
@@ -46,6 +62,8 @@ export class EntityPool {
     this.x[slot] = this.z[slot] = this.vx[slot] = this.vz[slot] = 0;
     this.hp[slot] = this.damage[slot] = this.radius[slot] = this.speed[slot] = 0;
     this.life[slot] = this.flash[slot] = this.bounce[slot] = 0;
+    this.kind[slot] = this.state[slot] = this.timer[slot] = this.attack[slot] = this.pierce[slot] = 0;
+    this.facingX[slot] = this.facingZ[slot] = this.maxHp[slot] = 0;
     return slot;
   }
 

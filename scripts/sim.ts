@@ -6,7 +6,7 @@ const { values } = parseArgs({ args: Bun.argv.slice(2), options: {
   seed: { type: 'string', default: '42' },
   room: { type: 'string', default: 'moss-hall' },
   boons: { type: 'string', default: '' },
-  ticks: { type: 'string', default: '7200' },
+  ticks: { type: 'string', default: '36000' },
   state: { type: 'boolean', default: false },
 } });
 const limit = Number(values.ticks);

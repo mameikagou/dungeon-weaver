@@ -8,6 +8,9 @@ export const enemiesAtom = atom(0);
 export const boonsAtom = atom<readonly string[]>([]);
 export const roomAtom = atom('苔光回廊');
 export const floorAtom = atom(0);
+export const waveAtom = atom('');
+export const hintAtom = atom('');
+export const bossHpAtom = atom(0);
 export const phaseAtom = atom<Phase>('playing');
 export const pausedAtom = atom(true);
 export const startedAtom = atom(false);
@@ -24,6 +27,15 @@ export function createUiBridge() {
       if (store.get(enemiesAtom) !== simulation.enemies.count) store.set(enemiesAtom, simulation.enemies.count);
       if (store.get(roomAtom) !== simulation.room.name) store.set(roomAtom, simulation.room.name);
       if (store.get(floorAtom) !== simulation.roomX) store.set(floorAtom, simulation.roomX);
+      const wave = simulation.waveDelay ? '下一波即将出现' : `第 ${simulation.wave + 1} / ${simulation.room.waves} 波`;
+      if (store.get(waveAtom) !== wave) store.set(waveAtom, wave);
+      if (store.get(hintAtom) !== simulation.room.hint) store.set(hintAtom, simulation.room.hint);
+      let bossHp = 0;
+      for (let index = 0; index < simulation.enemies.count; index++) {
+        const slot = simulation.enemies.active[index];
+        if (simulation.enemies.kind[slot] === 3) bossHp = simulation.enemies.hp[slot];
+      }
+      if (store.get(bossHpAtom) !== bossHp) store.set(bossHpAtom, bossHp);
       if (store.get(phaseAtom) !== simulation.phase) store.set(phaseAtom, simulation.phase);
       const current = store.get(boonsAtom);
       if (current.length !== simulation.boonIds.length || current.some((id, index) => id !== simulation.boonIds[index])) {

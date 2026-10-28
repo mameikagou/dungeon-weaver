@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Provider, useAtomValue, useStore } from 'jotai';
-import { boons } from '../content/boons';
+import { boons, boonChoices } from '../content/boons';
+import { dungeonRooms } from '../content/rooms';
+import { enemyTypes } from '../content/enemies';
 import { GameRuntime } from '../runtime';
 import {
   createUiBridge,
@@ -10,6 +12,9 @@ import {
   boonsAtom,
   roomAtom,
   floorAtom,
+  waveAtom,
+  hintAtom,
+  bossHpAtom,
   phaseAtom,
   pausedAtom,
   startedAtom,
@@ -36,17 +41,47 @@ function Journey() {
   const room = useAtomValue(roomAtom);
   const floor = useAtomValue(floorAtom);
   const enemies = useAtomValue(enemiesAtom);
+  const wave = useAtomValue(waveAtom);
   return (
     <div className="text-right">
       <div className="eyebrow">THE MOSSBOUND DESCENT</div>
       <div className="mt-1 text-lg">
-        {room} <span className="text-sm text-stone-400">0{floor + 1} / 02</span>
+        {room}{' '}
+        <span className="text-sm text-stone-400">
+          0{floor + 1} / 0{dungeonRooms.length}
+        </span>
       </div>
       <div className="mt-2 text-xs text-stone-400">
-        {enemies ? `游荡者 · ${enemies}` : '房间已净化'}{' '}
-        <span className="ml-3 text-emerald-200">{floor === 0 ? '◆ ─ ◇' : '◇ ─ ◆'}</span>
+        {wave} · 敌人 {enemies}
+        <div className="mt-2 text-emerald-200">
+          {dungeonRooms.map((room, index) => (
+            <span key={room.id} className="ml-2">
+              {index === floor ? '◆' : '◇'}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
+  );
+}
+
+function CombatCaption() {
+  const hint = useAtomValue(hintAtom);
+  const bossHp = useAtomValue(bossHpAtom);
+  return (
+    <>
+      {bossHp > 0 && (
+        <div className="boss-bar">
+          <div>
+            {bossHp < enemyTypes[3].hp / 2 ? '苔冠守望者 · 狂怒' : '苔冠守望者'} <span>{Math.ceil(bossHp)}</span>
+          </div>
+          <div className="health-track">
+            <div style={{ width: `${(bossHp / enemyTypes[3].hp) * 100}%` }} />
+          </div>
+        </div>
+      )}
+      <div className="combat-hint">{hint}</div>
+    </>
   );
 }
 
@@ -83,6 +118,8 @@ function Overlay({ runtime }: { runtime: GameRuntime | null }) {
   const phase = useAtomValue(phaseAtom);
   const paused = useAtomValue(pausedAtom);
   const owned = useAtomValue(boonsAtom);
+  const floor = useAtomValue(floorAtom);
+  const choices = boonChoices(owned, floor);
   if (!runtime || (started && phase === 'playing' && !paused)) return null;
   if (phase === 'reward')
     return (
@@ -90,27 +127,35 @@ function Overlay({ runtime }: { runtime: GameRuntime | null }) {
         <section className="reward-panel">
           <div className="eyebrow">A GIFT FROM THE DEPTHS</div>
           <h1>选择你的祝福</h1>
-          <p>带上一束微光，走向下一间密室。</p>
+          <p>恢复 12 点生命。组合弹幕与突进祝福，走向下一间密室。</p>
           <div className="boon-grid">
-            {boons
-              .filter((boon) => !owned.includes(boon.id))
-              .slice(0, 3)
-              .map((boon) => (
-                <button
-                  className="boon-card"
-                  key={boon.id}
-                  onClick={() => {
-                    runtime.simulation.chooseBoon(boon.id);
-                    runtime.pause(false);
-                  }}
-                >
-                  <span className="boon-symbol">{boon.icon}</span>
-                  <strong>{boon.name}</strong>
-                  <span>{boon.description}</span>
-                  <small>拾取祝福 ↗</small>
-                </button>
-              ))}
+            {choices.map((boon) => (
+              <button
+                className="boon-card"
+                key={boon.id}
+                onClick={() => {
+                  runtime.simulation.chooseBoon(boon.id);
+                  runtime.pause(false);
+                }}
+              >
+                <span className="boon-symbol">{boon.icon}</span>
+                <strong>{boon.name}</strong>
+                <span>{boon.description}</span>
+                <small>{boon.route} · 拾取祝福 ↗</small>
+              </button>
+            ))}
           </div>
+          {!choices.length && (
+            <button
+              className="primary"
+              onClick={() => {
+                runtime.simulation.continueJourney();
+                runtime.pause(false);
+              }}
+            >
+              继续深入 →
+            </button>
+          )}
         </section>
       </div>
     );
@@ -129,7 +174,7 @@ function Overlay({ runtime }: { runtime: GameRuntime | null }) {
   }
   if (phase === 'won') {
     title = '地牢重现微光';
-    description = '两间密室已经净化。这趟旅程，由你写下。';
+    description = '六间密室已经净化，苔冠守望者重归宁静。';
     action = '再探索一次';
   }
   return (
@@ -149,6 +194,9 @@ function Overlay({ runtime }: { runtime: GameRuntime | null }) {
           {action} <span>→</span>
         </button>
         <div className="instructions">
+          <span>
+            <kbd>E</kbd> 按住蓄力 / 松开贯穿
+          </span>
           <span>
             <kbd>W A S D</kbd> 移动
           </span>
@@ -226,6 +274,7 @@ function Game() {
           </div>
           <Journey />
         </header>
+        <CombatCaption />
         <div className="floor-caption">
           <span>01 — THE UNDERGROWTH</span>
           <span>FOLLOW THE LIGHT</span>
@@ -234,9 +283,7 @@ function Game() {
           <Inventory />
           <div className="bottom-right">
             <Controls runtime={runtime} />
-            <span className="text-xs text-stone-500">
-              WASD 移动 · 左键攻击 · 空格闪避 · ESC 暂停
-            </span>
+            <span className="text-xs text-stone-500">WASD 移动 · 左键连射 · E 蓄力 · 空格闪避 · ESC 暂停</span>
           </div>
         </footer>
         <Overlay runtime={runtime} />
